@@ -1,10 +1,11 @@
-// Szabott termékek oldal — P5–P7: szerkeszthető táblázat + Excel/CSV import
+// Szabott termékek oldal — P5–P9: szerkeszthető táblázat + Excel/CSV import + oszlop-hozzárendelés
 import { useRef, useState, useCallback } from 'react';
 import useProductsStore from '../store/productsStore';
 import useSettingsStore from '../store/settingsStore';
 import SectionCard from '../components/ui/SectionCard';
 import ProductsTable from '../components/products/ProductsTable';
-import { validateFileType, importExcel } from '../utils/excelImport';
+import ColumnMappingDialog from '../components/products/ColumnMappingDialog';
+import { validateFileType, importExcel, applyMapping } from '../utils/excelImport';
 
 function ImportModeDialog({ rowCount, onReplace, onAppend, onCancel }) {
   return (
@@ -55,7 +56,8 @@ function CutProductsPage() {
   const fileInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState(null);
-  const [pendingImport, setPendingImport] = useState(null); // { rows, result } — dialog megjelenítéséhez
+  const [pendingMapping, setPendingMapping] = useState(null);  // P9: mapping dialog adatai
+  const [pendingImport, setPendingImport] = useState(null);    // { rows, sheetName, detectedType } — import mód dialog
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -66,20 +68,40 @@ function CutProductsPage() {
     return rows.some((r) => r.quality || r.type || r.size || r.cutLength || r.quantity);
   };
 
-  const applyImport = useCallback((importedRows, result, mode) => {
+  const finalizeImport = useCallback((importedRows, sheetName, detectedType, mode) => {
     if (mode === 'replace') {
       setRows(importedRows);
     } else {
       appendRows(importedRows);
     }
-    const typeInfo = result.detectedType ? ` Típus: ${result.detectedType}.` : '';
+    const typeInfo = detectedType ? ` Típus: ${detectedType}.` : '';
     const modeText = mode === 'append' ? ' (hozzáfűzve)' : '';
     setImportMsg({
       type: 'success',
-      text: `${result.totalParsed} sor betöltve a „${result.sheetName}" munkalapról${modeText}.${typeInfo}`,
+      text: `${importedRows.length} sor betöltve a „${sheetName}" munkalapról${modeText}.${typeInfo}`,
     });
     setPendingImport(null);
   }, [setRows, appendRows]);
+
+  // P9: Mapping dialog jóváhagyása → sorok konvertálása → import mód (ha kell)
+  const handleMappingApply = useCallback((mapping, detectedType) => {
+    const { dataRows, sheetName } = pendingMapping;
+    const importedRows = applyMapping(dataRows, mapping, detectedType);
+
+    if (importedRows.length === 0) {
+      setImportMsg({ type: 'error', text: 'A kiválasztott oszlopokból nem nyerhető ki feldolgozható adat.' });
+      setPendingMapping(null);
+      return;
+    }
+
+    setPendingMapping(null);
+
+    if (hasExistingData()) {
+      setPendingImport({ rows: importedRows, sheetName, detectedType });
+    } else {
+      finalizeImport(importedRows, sheetName, detectedType, 'replace');
+    }
+  }, [pendingMapping, finalizeImport]);
 
   const handleFileChange = useCallback(async (e) => {
     const file = e.target.files?.[0];
@@ -99,19 +121,14 @@ function CutProductsPage() {
       const arrayBuffer = await file.arrayBuffer();
       const result = importExcel(arrayBuffer, file.name, knownTypes);
 
-      if (hasExistingData()) {
-        // Van adat → dialog megjelenítése
-        setPendingImport({ rows: result.rows, result });
-      } else {
-        // Üres tábla → egyből felülírjuk
-        applyImport(result.rows, result, 'replace');
-      }
+      // P9: Mindig megjelenítjük a mapping dialogot
+      setPendingMapping(result);
     } catch (err) {
       setImportMsg({ type: 'error', text: err.message || 'Ismeretlen hiba a fájl beolvasásakor.' });
     } finally {
       setImporting(false);
     }
-  }, [setRows, knownTypes, applyImport]);
+  }, [knownTypes]);
 
   return (
     <main className="max-w-7xl mx-auto px-4 py-6">
@@ -177,12 +194,27 @@ function CutProductsPage() {
         />
       </SectionCard>
 
+      {/* P9: Oszlop-hozzárendelés dialog */}
+      {pendingMapping && (
+        <ColumnMappingDialog
+          headerRow={pendingMapping.headerRow}
+          dataRows={pendingMapping.dataRows}
+          columnCount={pendingMapping.columnCount}
+          initialMapping={pendingMapping.mapping}
+          autoDetected={pendingMapping.autoDetected}
+          detectedType={pendingMapping.detectedType}
+          sheetName={pendingMapping.sheetName}
+          onApply={handleMappingApply}
+          onCancel={() => setPendingMapping(null)}
+        />
+      )}
+
       {/* Import mód választó dialog */}
       {pendingImport && (
         <ImportModeDialog
-          rowCount={pendingImport.result.totalParsed}
-          onReplace={() => applyImport(pendingImport.rows, pendingImport.result, 'replace')}
-          onAppend={() => applyImport(pendingImport.rows, pendingImport.result, 'append')}
+          rowCount={pendingImport.rows.length}
+          onReplace={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'replace')}
+          onAppend={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'append')}
           onCancel={() => setPendingImport(null)}
         />
       )}

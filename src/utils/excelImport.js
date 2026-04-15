@@ -188,7 +188,28 @@ function detectTypeFromTitle(titleRows, knownTypes) {
 }
 
 /**
+ * Oszlop-leképezés alkalmazása: nyers adatsorokból ProductsStore formátumú sorokat készít.
+ * Exportálva, hogy a ColumnMappingDialog is használhassa.
+ * @param {any[][]} dataRows - Nyers adatsorok
+ * @param {Object} mapping - Oszlop-leképezés { quality: colIdx, type: colIdx, ... }
+ * @param {string} detectedType - Felismert típusnév (opcionális)
+ */
+export function applyMapping(dataRows, mapping, detectedType = '') {
+  const rows = convertRows(dataRows, mapping);
+
+  if (detectedType) {
+    for (const row of rows) {
+      if (!row.type) row.type = detectedType;
+    }
+  }
+
+  return rows;
+}
+
+/**
  * Fő import funkció: beolvas és automatikusan leképezi az oszlopokat.
+ * Mindig visszaadja a nyers adatokat és a felismert mapping-et (ha van).
+ * A ColumnMappingDialog fogja megjeleníteni a hozzárendelést.
  * @param {ArrayBuffer} arrayBuffer - A fájl tartalma
  * @param {string} fileName - A fájl neve
  * @param {string[]} knownTypes - Beállításokban lévő típusnevek (opcionális)
@@ -207,53 +228,32 @@ export function importExcel(arrayBuffer, fileName, knownTypes = []) {
     // Típus kinyerése a fejléc előtti cím sorokból
     const detectedType = detectTypeFromTitle(allRows.slice(0, headerIdx), knownTypes);
 
-    const rows = convertRows(dataRows, mapping);
-
-    // Ha találtunk típust a címből és az oszlopokból nem jött típus, beállítjuk
-    if (detectedType) {
-      for (const row of rows) {
-        if (!row.type) row.type = detectedType;
-      }
-    }
-
-    if (rows.length === 0) {
-      throw new Error('A fájl nem tartalmaz feldolgozható adatsorokat.');
-    }
-
     return {
-      rows,
       mapping,
       headerRow: headerRow.map(String),
+      dataRows,
       sheetName,
       autoDetected: true,
-      totalParsed: rows.length,
       detectedType: detectedType || null,
+      columnCount: headerRow.length,
     };
   }
 
-  // Nincs fejléc felismerve — ha pontosan 5 oszlop, pozíció alapján próbáljuk
+  // Nincs fejléc felismerve — összes sor az adat
   const maxCols = Math.max(...allRows.map((r) => r.length));
-  if (maxCols === 5) {
-    const mapping = { quality: 0, type: 1, size: 2, cutLength: 3, quantity: 4 };
-    const rows = convertRows(allRows, mapping);
 
-    if (rows.length === 0) {
-      throw new Error('A fájl nem tartalmaz feldolgozható adatsorokat.');
-    }
+  // Ha pontosan 5 oszlop, pozíció alapján javasoljuk a mapping-et
+  const mapping = maxCols === 5
+    ? { quality: 0, type: 1, size: 2, cutLength: 3, quantity: 4 }
+    : {};
 
-    return {
-      rows,
-      mapping,
-      headerRow: null,
-      sheetName,
-      autoDetected: true,
-      totalParsed: rows.length,
-    };
-  }
-
-  // Nem sikerült automatikusan felismerni
-  throw new Error(
-    'Nem sikerült automatikusan felismerni az oszlopokat. ' +
-    'Kérlek ellenőrizd, hogy a fájl tartalmaz-e fejlécsort (pl. Méret, Hossz, DB).'
-  );
+  return {
+    mapping,
+    headerRow: null,
+    dataRows: allRows,
+    sheetName,
+    autoDetected: maxCols === 5,
+    detectedType: null,
+    columnCount: maxCols,
+  };
 }
