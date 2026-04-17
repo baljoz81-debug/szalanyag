@@ -9,6 +9,11 @@ const APP_FIELDS = [
   { key: 'quantity',  label: 'Darabszám (db)',     required: true },
 ];
 
+const SIZE_EXTRA_FIELDS = [
+  { key: 'size2', label: 'Méret 2 (opcionális)' },
+  { key: 'size3', label: 'Méret 3 (opcionális)' },
+];
+
 function ColumnMappingDialog({
   headerRow,        // string[] | null — fejléc sor (ha volt)
   dataRows,         // any[][] — nyers adatsorok
@@ -25,6 +30,8 @@ function ColumnMappingDialog({
     for (const f of APP_FIELDS) {
       m[f.key] = initialMapping[f.key] !== undefined ? String(initialMapping[f.key]) : '';
     }
+    m.size2 = initialMapping.size2 !== undefined ? String(initialMapping.size2) : '';
+    m.size3 = initialMapping.size3 !== undefined ? String(initialMapping.size3) : '';
     return m;
   });
 
@@ -55,8 +62,18 @@ function ColumnMappingDialog({
     setMapping((prev) => ({ ...prev, [fieldKey]: value }));
   };
 
+  // Összetett méret érték kiszámítása egy sorhoz
+  const getSizeValue = (row) => {
+    const parts = ['size', 'size2', 'size3']
+      .map((key) => {
+        const colIdx = mapping[key] !== '' ? parseInt(mapping[key], 10) : -1;
+        return colIdx >= 0 && colIdx < row.length ? String(row[colIdx]).trim() : '';
+      })
+      .filter(Boolean);
+    return parts.join('x');
+  };
+
   const handleApply = () => {
-    // Mapping-et számokká konvertáljuk
     const numericMapping = {};
     for (const [key, val] of Object.entries(mapping)) {
       if (val !== '') {
@@ -72,9 +89,37 @@ function ColumnMappingDialog({
   // Melyik oszlopok vannak már kiválasztva (duplikáció elkerülés)
   const usedColumns = new Set(Object.values(mapping).filter((v) => v !== ''));
 
+  // Méret 2/3 csak akkor jelenjen meg, ha Méret 1 ki van választva
+  const showSizeExtras = mapping.size !== '';
+
+  const renderSelect = (fieldKey, label, required) => (
+    <div key={fieldKey} className="flex flex-col gap-1">
+      <label className="font-body text-xs text-text-secondary">
+        {label}
+        {required && <span className="text-danger ml-1">*</span>}
+      </label>
+      <select
+        value={mapping[fieldKey]}
+        onChange={(e) => handleFieldChange(fieldKey, e.target.value)}
+        className="bg-input-bg border border-border-subtle rounded px-3 py-2 text-text-primary font-body text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+      >
+        <option value="">— Nincs hozzárendelve —</option>
+        {columnOptions.map((opt) => (
+          <option
+            key={opt.value}
+            value={opt.value}
+            disabled={usedColumns.has(opt.value) && mapping[fieldKey] !== opt.value}
+          >
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-panel-bg border border-border-subtle rounded-lg shadow-xl p-6 max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-panel border border-border-subtle rounded-lg shadow-xl p-6 max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
         {/* Fejléc */}
         <h3 className="font-heading text-lg text-text-primary mb-1">
           Oszlop-hozzárendelés
@@ -101,27 +146,19 @@ function ColumnMappingDialog({
         {/* Hozzárendelés legördülők */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
           {APP_FIELDS.map((field) => (
-            <div key={field.key} className="flex flex-col gap-1">
-              <label className="font-body text-xs text-text-secondary">
-                {field.label}
-                {field.required && <span className="text-danger ml-1">*</span>}
-              </label>
-              <select
-                value={mapping[field.key]}
-                onChange={(e) => handleFieldChange(field.key, e.target.value)}
-                className="bg-input-bg border border-border-subtle rounded px-3 py-2 text-text-primary font-body text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                <option value="">— Nincs hozzárendelve —</option>
-                {columnOptions.map((opt) => (
-                  <option
-                    key={opt.value}
-                    value={opt.value}
-                    disabled={usedColumns.has(opt.value) && mapping[field.key] !== opt.value}
-                  >
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+            <div key={field.key}>
+              {renderSelect(field.key, field.label, field.required)}
+              {/* Méret extra oszlopok */}
+              {field.key === 'size' && showSizeExtras && (
+                <div className="mt-2 ml-3 border-l-2 border-accent/30 pl-3 flex flex-col gap-2">
+                  <p className="font-body text-xs text-text-secondary/70">
+                    Több oszlopból álló méret (pl. 40x30x3):
+                  </p>
+                  {SIZE_EXTRA_FIELDS.map((ef) =>
+                    renderSelect(ef.key, ef.label, false)
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -150,10 +187,15 @@ function ColumnMappingDialog({
                   {previewRows.map((row, rowIdx) => (
                     <tr key={rowIdx} className="border-b border-border-subtle/50">
                       {APP_FIELDS.map((field) => {
-                        const colIdx = mapping[field.key] !== '' ? parseInt(mapping[field.key], 10) : -1;
-                        const cellValue = colIdx >= 0 && colIdx < row.length
-                          ? String(row[colIdx]).trim()
-                          : '';
+                        let cellValue;
+                        if (field.key === 'size') {
+                          cellValue = getSizeValue(row);
+                        } else {
+                          const colIdx = mapping[field.key] !== '' ? parseInt(mapping[field.key], 10) : -1;
+                          cellValue = colIdx >= 0 && colIdx < row.length
+                            ? String(row[colIdx]).trim()
+                            : '';
+                        }
                         return (
                           <td
                             key={field.key}

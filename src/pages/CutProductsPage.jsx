@@ -5,12 +5,44 @@ import useSettingsStore from '../store/settingsStore';
 import SectionCard from '../components/ui/SectionCard';
 import ProductsTable from '../components/products/ProductsTable';
 import ColumnMappingDialog from '../components/products/ColumnMappingDialog';
-import { validateFileType, importExcel, applyMapping } from '../utils/excelImport';
+import { validateFileType, parseWorkbook, importSheet, applyMapping } from '../utils/excelImport';
+
+function SheetSelectorDialog({ sheetNames, onSelect, onCancel }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-panel border border-border-subtle rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+        <h3 className="font-heading text-lg text-text-primary mb-2">
+          Munkalap kiválasztása
+        </h3>
+        <p className="font-body text-sm text-text-secondary mb-4">
+          A fájl {sheetNames.length} munkalapot tartalmaz. Melyiket szeretnéd betölteni?
+        </p>
+        <div className="flex flex-col gap-2 mb-4">
+          {sheetNames.map((name) => (
+            <button
+              key={name}
+              onClick={() => onSelect(name)}
+              className="w-full px-4 py-2 bg-panel-hover text-text-primary border border-border-subtle rounded font-body text-sm hover:bg-input-bg hover:border-accent transition-colors text-left"
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={onCancel}
+          className="w-full px-4 py-2 text-text-secondary font-body text-sm hover:text-text-primary transition-colors"
+        >
+          Mégsem
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ImportModeDialog({ rowCount, onReplace, onAppend, onCancel }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-panel-bg border border-border-subtle rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+      <div className="bg-panel border border-border-subtle rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
         <h3 className="font-heading text-lg text-text-primary mb-2">
           Import mód
         </h3>
@@ -55,9 +87,11 @@ function CutProductsPage() {
 
   const fileInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
-  const [importMsg, setImportMsg] = useState(null);
+  const [importMsg, setImportMsg] = useState(null);   // { type, text, warnings? }
+  const [pendingSheets, setPendingSheets] = useState(null);    // { wb, sheetNames } — munkalapválasztó
   const [pendingMapping, setPendingMapping] = useState(null);  // P9: mapping dialog adatai
-  const [pendingImport, setPendingImport] = useState(null);    // { rows, sheetName, detectedType } — import mód dialog
+  const [pendingImport, setPendingImport] = useState(null);    // { rows, sheetName, detectedType, warnings } — import mód dialog
+  const [warningRowIds, setWarningRowIds] = useState(new Set()); // hibás sorok kiemelése
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -68,17 +102,20 @@ function CutProductsPage() {
     return rows.some((r) => r.quality || r.type || r.size || r.cutLength || r.quantity);
   };
 
-  const finalizeImport = useCallback((importedRows, sheetName, detectedType, mode) => {
+  const finalizeImport = useCallback((importedRows, sheetName, detectedType, mode, warnings = [], newWarningIds = new Set()) => {
     if (mode === 'replace') {
       setRows(importedRows);
+      setWarningRowIds(newWarningIds);
     } else {
       appendRows(importedRows);
+      setWarningRowIds((prev) => new Set([...prev, ...newWarningIds]));
     }
     const typeInfo = detectedType ? ` Típus: ${detectedType}.` : '';
     const modeText = mode === 'append' ? ' (hozzáfűzve)' : '';
     setImportMsg({
-      type: 'success',
+      type: warnings.length > 0 ? 'warning' : 'success',
       text: `${importedRows.length} sor betöltve a „${sheetName}" munkalapról${modeText}.${typeInfo}`,
+      warnings,
     });
     setPendingImport(null);
   }, [setRows, appendRows]);
@@ -86,7 +123,7 @@ function CutProductsPage() {
   // P9: Mapping dialog jóváhagyása → sorok konvertálása → import mód (ha kell)
   const handleMappingApply = useCallback((mapping, detectedType) => {
     const { dataRows, sheetName } = pendingMapping;
-    const importedRows = applyMapping(dataRows, mapping, detectedType);
+    const { rows: importedRows, warnings, warningRowIds: newWarningIds } = applyMapping(dataRows, mapping, detectedType);
 
     if (importedRows.length === 0) {
       setImportMsg({ type: 'error', text: 'A kiválasztott oszlopokból nem nyerhető ki feldolgozható adat.' });
@@ -97,11 +134,24 @@ function CutProductsPage() {
     setPendingMapping(null);
 
     if (hasExistingData()) {
-      setPendingImport({ rows: importedRows, sheetName, detectedType });
+      setPendingImport({ rows: importedRows, sheetName, detectedType, warnings, warningRowIds: newWarningIds });
     } else {
-      finalizeImport(importedRows, sheetName, detectedType, 'replace');
+      finalizeImport(importedRows, sheetName, detectedType, 'replace', warnings, newWarningIds);
     }
   }, [pendingMapping, finalizeImport]);
+
+  // Munkalap kiválasztása után → oszlopmapping dialog
+  const handleSheetSelect = useCallback((sheetName) => {
+    const { wb } = pendingSheets;
+    try {
+      const result = importSheet(wb, sheetName, knownTypes);
+      setPendingSheets(null);
+      setPendingMapping(result);
+    } catch (err) {
+      setPendingSheets(null);
+      setImportMsg({ type: 'error', text: err.message });
+    }
+  }, [pendingSheets, knownTypes]);
 
   const handleFileChange = useCallback(async (e) => {
     const file = e.target.files?.[0];
@@ -119,10 +169,16 @@ function CutProductsPage() {
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const result = importExcel(arrayBuffer, file.name, knownTypes);
+      const { wb, sheetNames } = parseWorkbook(arrayBuffer);
 
-      // P9: Mindig megjelenítjük a mapping dialogot
-      setPendingMapping(result);
+      if (sheetNames.length > 1) {
+        // Több munkalap → választó dialog
+        setPendingSheets({ wb, sheetNames });
+      } else {
+        // Egyetlen munkalap → egyből mapping dialog
+        const result = importSheet(wb, sheetNames[0], knownTypes);
+        setPendingMapping(result);
+      }
     } catch (err) {
       setImportMsg({ type: 'error', text: err.message || 'Ismeretlen hiba a fájl beolvasásakor.' });
     } finally {
@@ -176,23 +232,81 @@ function CutProductsPage() {
           />
 
           {importMsg && (
-            <span
-              className={`font-body text-sm ${
-                importMsg.type === 'success' ? 'text-green-400' : 'text-danger'
-              }`}
-            >
-              {importMsg.text}
-            </span>
+            <div className="flex flex-col gap-1">
+              <span
+                className={`font-body text-sm ${
+                  importMsg.type === 'success'
+                    ? 'text-green-400'
+                    : importMsg.type === 'warning'
+                      ? 'text-yellow-400'
+                      : 'text-danger'
+                }`}
+              >
+                {importMsg.text}
+              </span>
+              {importMsg.warnings?.length > 0 && (
+                <details className="font-body text-xs text-yellow-400/80">
+                  <summary className="cursor-pointer hover:text-yellow-300">
+                    {importMsg.warnings.length} figyelmeztetés
+                  </summary>
+                  <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                    {importMsg.warnings.map((w, i) => (
+                      <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
           )}
         </div>
 
         <ProductsTable
           rows={rows}
-          onUpdateCell={updateCell}
+          onUpdateCell={(id, key, val) => {
+            updateCell(id, key, val);
+            // Ha a sor ki volt emelve és most már érvényes, eltávolítjuk a kiemelést
+            if (warningRowIds.has(id)) {
+              const row = rows.find((r) => r.id === id);
+              if (row) {
+                const updated = { ...row, [key]: val };
+                const cutVal = Number(updated.cutLength);
+                const qtyVal = Number(updated.quantity);
+                const sizeOk = updated.size !== '';
+                const cutOk = updated.cutLength !== '' && Number.isInteger(cutVal) && cutVal > 0;
+                const qtyOk = updated.quantity !== '' && Number.isInteger(qtyVal) && qtyVal > 0;
+                if (sizeOk && cutOk && qtyOk) {
+                  setWarningRowIds((prev) => {
+                    const next = new Set(prev);
+                    next.delete(id);
+                    return next;
+                  });
+                }
+              }
+            }
+          }}
           onAddRow={addRow}
-          onRemoveRow={removeRow}
+          onRemoveRow={(id) => {
+            removeRow(id);
+            if (warningRowIds.has(id)) {
+              setWarningRowIds((prev) => {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+              });
+            }
+          }}
+          warningRowIds={warningRowIds}
         />
       </SectionCard>
+
+      {/* Munkalapválasztó dialog */}
+      {pendingSheets && (
+        <SheetSelectorDialog
+          sheetNames={pendingSheets.sheetNames}
+          onSelect={handleSheetSelect}
+          onCancel={() => setPendingSheets(null)}
+        />
+      )}
 
       {/* P9: Oszlop-hozzárendelés dialog */}
       {pendingMapping && (
@@ -213,8 +327,8 @@ function CutProductsPage() {
       {pendingImport && (
         <ImportModeDialog
           rowCount={pendingImport.rows.length}
-          onReplace={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'replace')}
-          onAppend={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'append')}
+          onReplace={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'replace', pendingImport.warnings, pendingImport.warningRowIds)}
+          onAppend={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'append', pendingImport.warnings, pendingImport.warningRowIds)}
           onCancel={() => setPendingImport(null)}
         />
       )}

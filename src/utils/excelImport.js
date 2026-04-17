@@ -1,14 +1,34 @@
 // Excel/CSV import — P7+P8: fájl beolvasás + automatikus oszlopazonosítás
 import * as XLSX from 'xlsx';
 
+// Tiltólista: ezek az oszlopnevek soha ne kerüljenek automatikusan hozzárendelésre
+const COLUMN_BLACKLIST = ['rajzszám', 'rajzszam', 'megnevezés', 'megnevezes', 'megjegyzés', 'megjegyzes', 'jel', 'szám', 'szam', 'sorszám', 'sorszam'];
+
 // Oszlop-kulcsszavak az automatikus felismeréshez (kis-nagybetű érzéketlen)
 const COLUMN_PATTERNS = {
   quality:   ['anyagminőség', 'anyagminoseg', 'minőség', 'minoseg', 'quality'],
   type:      ['típus', 'tipus', 'type', 'anyagtípus'],
-  size:      ['méret', 'meret', 'size', 'átmérő', 'atmero', 'profil', 'dimenzió'],
-  cutLength: ['hossz', 'szabási hossz', 'szabási', 'szabasi', 'length', 'hossz (mm)', 'hossz(mm)'],
-  quantity:  ['darabszám', 'darabszam', 'db', 'mennyiség', 'mennyiseg', 'quantity', 'pcs'],
+  size:      ['méret', 'meret', 'size', 'átmérő', 'atmero', 'profil', 'dimenzió', 'magasság', 'magassag', 'height', 'x'],
+  size2:     ['szélesség', 'szelesseg', 'width', 'b', 'y'],
+  size3:     ['falvastagság', 'falvastagsag', 'falv.', 'vastagság', 'vastagsag', 'wall', 'thickness', 's'],
+  cutLength: ['hossz', 'szabási hossz', 'szabási', 'szabasi', 'length', 'hossz (mm)', 'hossz(mm)', 'l'],
+  quantity:  ['darabszám', 'darabszam', 'mennyiség', 'mennyiseg', 'quantity', 'pcs', 'db', 'db.'],
 };
+
+/**
+ * Minta illesztése fejléc szövegre.
+ * Rövid minták (max 2 karakter): pontos egyezés VAGY a fejléc ezzel kezdődik
+ * és utána szóköz, zárójel vagy sor vége jön (pl. "x (mm)" illeszkedik "x"-re).
+ * Hosszú minták: includes.
+ */
+function matchPattern(cellStr, pattern) {
+  if (pattern.length <= 2) {
+    if (cellStr === pattern) return true;
+    // "x (mm)", "db.", "db " stb.
+    return cellStr.startsWith(pattern) && /^[\s(.)]/.test(cellStr.slice(pattern.length));
+  }
+  return cellStr.includes(pattern);
+}
 
 /**
  * Elfogadott fájl kiterjesztés ellenőrzése
@@ -19,26 +39,31 @@ export function validateFileType(fileName) {
 }
 
 /**
- * Excel/CSV fájl beolvasása ArrayBuffer-ből
- * Visszaadja: { headers: string[], dataRows: any[][], sheetName: string }
+ * Excel/CSV fájl beolvasása ArrayBuffer-ből.
+ * Visszaadja a workbook-ot és a munkalapnevek listáját.
  */
-export function parseWorkbook(arrayBuffer, fileName) {
-  const ext = fileName.split('.').pop().toLowerCase();
+export function parseWorkbook(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: 'array' });
 
   if (!wb.SheetNames.length) {
     throw new Error('A fájl nem tartalmaz munkalapot.');
   }
 
-  const sheetName = wb.SheetNames[0];
+  return { wb, sheetNames: wb.SheetNames };
+}
+
+/**
+ * Egy adott munkalap kiolvasása a workbook-ból.
+ */
+export function parseSheet(wb, sheetName) {
   const ws = wb.Sheets[sheetName];
   const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
   if (allRows.length === 0) {
-    throw new Error('A munkalap üres.');
+    throw new Error(`A „${sheetName}" munkalap üres.`);
   }
 
-  return { allRows, sheetName };
+  return allRows;
 }
 
 /**
@@ -59,9 +84,10 @@ function findHeaderRowIndex(allRows) {
     for (const cell of row) {
       const cellStr = String(cell).toLowerCase().trim();
       if (!cellStr) continue;
+      if (COLUMN_BLACKLIST.some((bl) => cellStr.includes(bl))) continue;
 
       for (const patterns of Object.values(COLUMN_PATTERNS)) {
-        if (patterns.some((p) => cellStr.includes(p))) {
+        if (patterns.some((p) => matchPattern(cellStr, p))) {
           score++;
           break;
         }
@@ -89,9 +115,12 @@ function mapColumnsByHeader(headerRow) {
     const cellStr = String(cell).toLowerCase().trim();
     if (!cellStr) return;
 
+    // Tiltólistán lévő oszlopnevek kihagyása
+    if (COLUMN_BLACKLIST.some((bl) => cellStr.includes(bl))) return;
+
     for (const [field, patterns] of Object.entries(COLUMN_PATTERNS)) {
       if (mapping[field] !== undefined) continue; // már megvan
-      if (patterns.some((p) => cellStr.includes(p))) {
+      if (patterns.some((p) => matchPattern(cellStr, p))) {
         mapping[field] = colIdx;
         break;
       }
@@ -117,10 +146,44 @@ function isDataRow(row) {
 }
 
 /**
+ * Szám mező validálása és konvertálása.
+ * Visszaad: { value: number|'', warning: string|null }
+ */
+function parseNumericField(rawValue, fieldLabel) {
+  if (!rawValue) return { value: '', warning: null };
+
+  // Tizedes vesszős formátum kezelése (pl. "1500,5" → "1500.5")
+  const normalized = String(rawValue).replace(',', '.');
+  const num = parseFloat(normalized);
+
+  if (isNaN(num)) {
+    return { value: '', warning: `„${rawValue}" nem szám (${fieldLabel})` };
+  }
+  if (num <= 0) {
+    return { value: '', warning: `${num} nem pozitív érték (${fieldLabel})` };
+  }
+  if (num > 100000) {
+    return { value: '', warning: `${num} irreálisan nagy érték (${fieldLabel})` };
+  }
+
+  const intVal = Math.round(num);
+  const warning = !Number.isInteger(num)
+    ? `${num} → ${intVal} kerekítve (${fieldLabel})`
+    : null;
+
+  return { value: intVal, warning };
+}
+
+/**
  * Sorok konvertálása a ProductsStore formátumra a mapping alapján.
+ * Visszaad: { rows: array, warnings: string[], warningRowIds: Set<string> }
  */
 function convertRows(dataRows, mapping) {
-  return dataRows.filter(isDataRow).map((row) => {
+  const warnings = [];
+  const warningRowIds = new Set();
+  let skippedEmpty = 0;
+
+  const rows = dataRows.filter(isDataRow).map((row, rowIdx) => {
     const getValue = (field) => {
       if (mapping[field] === undefined) return '';
       const val = row[mapping[field]];
@@ -129,16 +192,56 @@ function convertRows(dataRows, mapping) {
 
     const cutLengthRaw = getValue('cutLength');
     const quantityRaw = getValue('quantity');
+    const cutLengthResult = parseNumericField(cutLengthRaw, 'szabási hossz');
+    const quantityResult = parseNumericField(quantityRaw, 'darabszám');
+
+    const id = String(Date.now()) + Math.random().toString(36).slice(2, 6);
+
+    // Figyelmeztetések gyűjtése (soronként)
+    const rowWarnings = [cutLengthResult.warning, quantityResult.warning].filter(Boolean);
+
+    // Összetett méret: size + size2 + size3 összefűzése "x" elválasztóval
+    const sizeParts = [getValue('size'), getValue('size2'), getValue('size3')].filter(Boolean);
+    const size = sizeParts.join('x');
+
+    // Hiányzó kötelező mezők ellenőrzése
+    const hasAnyData = size || cutLengthResult.value || quantityResult.value;
+    if (hasAnyData) {
+      if (!size && mapping.size !== undefined) {
+        rowWarnings.push('hiányzó méret');
+      }
+      if (!cutLengthResult.value && !cutLengthResult.warning) {
+        rowWarnings.push('hiányzó szabási hossz');
+      }
+      if (!quantityResult.value && !quantityResult.warning) {
+        rowWarnings.push('hiányzó darabszám');
+      }
+    }
+
+    if (rowWarnings.length > 0) {
+      warnings.push(`${rowIdx + 1}. sor: ${rowWarnings.join('; ')}`);
+      warningRowIds.add(id);
+    }
 
     return {
-      id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
+      id,
       quality: getValue('quality') || 'S235',
       type: getValue('type'),
-      size: getValue('size'),
-      cutLength: cutLengthRaw ? (parseInt(cutLengthRaw, 10) || '') : '',
-      quantity: quantityRaw ? (parseInt(quantityRaw, 10) || '') : '',
+      size,
+      cutLength: cutLengthResult.value,
+      quantity: quantityResult.value,
     };
-  }).filter((row) => row.size || row.cutLength || row.quantity);
+  }).filter((row) => {
+    const hasData = row.size || row.cutLength || row.quantity;
+    if (!hasData) skippedEmpty++;
+    return hasData;
+  });
+
+  if (skippedEmpty > 0) {
+    warnings.unshift(`${skippedEmpty} sor kihagyva (nincs érdemi adat)`);
+  }
+
+  return { rows, warnings, warningRowIds };
 }
 
 /**
@@ -195,7 +298,7 @@ function detectTypeFromTitle(titleRows, knownTypes) {
  * @param {string} detectedType - Felismert típusnév (opcionális)
  */
 export function applyMapping(dataRows, mapping, detectedType = '') {
-  const rows = convertRows(dataRows, mapping);
+  const { rows, warnings, warningRowIds } = convertRows(dataRows, mapping);
 
   if (detectedType) {
     for (const row of rows) {
@@ -203,29 +306,24 @@ export function applyMapping(dataRows, mapping, detectedType = '') {
     }
   }
 
-  return rows;
+  return { rows, warnings, warningRowIds };
 }
 
 /**
- * Fő import funkció: beolvas és automatikusan leképezi az oszlopokat.
- * Mindig visszaadja a nyers adatokat és a felismert mapping-et (ha van).
- * A ColumnMappingDialog fogja megjeleníteni a hozzárendelést.
- * @param {ArrayBuffer} arrayBuffer - A fájl tartalma
- * @param {string} fileName - A fájl neve
+ * Egy munkalap feldolgozása: automatikus oszlopfelismerés + mapping.
+ * @param {Object} wb - XLSX workbook objektum
+ * @param {string} sheetName - Munkalap neve
  * @param {string[]} knownTypes - Beállításokban lévő típusnevek (opcionális)
  */
-export function importExcel(arrayBuffer, fileName, knownTypes = []) {
-  const { allRows, sheetName } = parseWorkbook(arrayBuffer, fileName);
+export function importSheet(wb, sheetName, knownTypes = []) {
+  const allRows = parseSheet(wb, sheetName);
 
   const headerIdx = findHeaderRowIndex(allRows);
 
   if (headerIdx >= 0) {
-    // Fejléc alapú automatikus leképezés
     const headerRow = allRows[headerIdx];
     const mapping = mapColumnsByHeader(headerRow);
     const dataRows = allRows.slice(headerIdx + 1);
-
-    // Típus kinyerése a fejléc előtti cím sorokból
     const detectedType = detectTypeFromTitle(allRows.slice(0, headerIdx), knownTypes);
 
     return {
@@ -239,10 +337,7 @@ export function importExcel(arrayBuffer, fileName, knownTypes = []) {
     };
   }
 
-  // Nincs fejléc felismerve — összes sor az adat
   const maxCols = Math.max(...allRows.map((r) => r.length));
-
-  // Ha pontosan 5 oszlop, pozíció alapján javasoljuk a mapping-et
   const mapping = maxCols === 5
     ? { quality: 0, type: 1, size: 2, cutLength: 3, quantity: 4 }
     : {};

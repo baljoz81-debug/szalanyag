@@ -18,6 +18,7 @@ function validatePositiveInt(val) {
 }
 
 function SelectCell({ value, options, placeholder, onChange }) {
+  const showCurrentValue = value && !options.includes(value);
   return (
     <select
       value={value || ''}
@@ -25,6 +26,9 @@ function SelectCell({ value, options, placeholder, onChange }) {
       className="w-full bg-input-bg text-text-primary px-2 py-1 rounded text-sm font-body border border-input-border focus:border-input-focus outline-none cursor-pointer"
     >
       <option value="">{placeholder}</option>
+      {showCurrentValue && (
+        <option value={value} className="text-yellow-400">{value} (importált)</option>
+      )}
       {options.map((opt) => (
         <option key={opt} value={opt}>{opt}</option>
       ))}
@@ -32,7 +36,7 @@ function SelectCell({ value, options, placeholder, onChange }) {
   );
 }
 
-function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow }) {
+function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow, warningRowIds }) {
   const tableRef = useRef(null);
 
   // Beállításokból olvassuk a legördülő opciókat
@@ -95,7 +99,7 @@ function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow }) {
         </thead>
         <tbody>
           {rows.map((row, rowIndex) => (
-            <tr key={row.id} className="border-b border-border-subtle/50 hover:bg-panel-hover/30">
+            <tr key={row.id} className={`border-b border-border-subtle/50 ${warningRowIds?.has(row.id) ? 'bg-yellow-500/25 border-l-2 border-l-yellow-400' : 'hover:bg-panel-hover/30'}`}>
               {COLUMNS.map((col, colIndex) => (
                 <td
                   key={col.key}
