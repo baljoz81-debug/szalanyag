@@ -2,11 +2,11 @@
 import { useState, useMemo } from 'react';
 
 const APP_FIELDS = [
-  { key: 'quality',   label: 'Anyagminőség', required: false },
-  { key: 'type',      label: 'Típus',        required: false },
-  { key: 'size',      label: 'Méret',        required: true },
-  { key: 'cutLength', label: 'Szabási hossz (mm)', required: true },
-  { key: 'quantity',  label: 'Darabszám (db)',     required: true },
+  { key: 'quality',   label: 'Anyagminőség', required: false, fallback: 'S235 (alapértelmezett)' },
+  { key: 'type',      label: 'Típus',        required: false, fallback: 'nincs megadva' },
+  { key: 'size',      label: 'Méret',        required: true,  fallback: null },
+  { key: 'cutLength', label: 'Szabási hossz (mm)', required: true,  fallback: null },
+  { key: 'quantity',  label: 'Darabszám (db)',     required: true,  fallback: null },
 ];
 
 const SIZE_EXTRA_FIELDS = [
@@ -21,6 +21,7 @@ function ColumnMappingDialog({
   initialMapping,   // { quality: colIdx, ... } — előtöltés (auto-detected)
   autoDetected,     // boolean — sikerült-e automatikusan felismerni
   detectedType,     // string | null — felismert típus a címből
+  detectedCategories, // string[] | null — anyaglista kategória típusok
   sheetName,        // string — munkalap neve
   onApply,          // (mapping, detectedType) => void
   onCancel,         // () => void
@@ -92,30 +93,49 @@ function ColumnMappingDialog({
   // Méret 2/3 csak akkor jelenjen meg, ha Méret 1 ki van választva
   const showSizeExtras = mapping.size !== '';
 
-  const renderSelect = (fieldKey, label, required) => (
-    <div key={fieldKey} className="flex flex-col gap-1">
-      <label className="font-body text-xs text-text-secondary">
-        {label}
-        {required && <span className="text-danger ml-1">*</span>}
-      </label>
-      <select
-        value={mapping[fieldKey]}
-        onChange={(e) => handleFieldChange(fieldKey, e.target.value)}
-        className="bg-input-bg border border-border-subtle rounded px-3 py-2 text-text-primary font-body text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-      >
-        <option value="">— Nincs hozzárendelve —</option>
-        {columnOptions.map((opt) => (
-          <option
-            key={opt.value}
-            value={opt.value}
-            disabled={usedColumns.has(opt.value) && mapping[fieldKey] !== opt.value}
-          >
-            {opt.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
+  const renderSelect = (fieldKey, label, required) => {
+    const fieldDef = APP_FIELDS.find((f) => f.key === fieldKey);
+    // Dinamikus hint: type mezőnél a detectedType-ot használjuk, ha van
+    let hintText = null;
+    if (mapping[fieldKey] === '') {
+      if (fieldKey === 'type' && detectedType) {
+        hintText = `${detectedType} (felismert)`;
+      } else if (fieldKey === 'type' && detectedCategories?.length > 0) {
+        hintText = detectedCategories.join(', ') + ' (felismert)';
+      } else if (fieldDef?.fallback) {
+        hintText = fieldDef.fallback;
+      }
+    }
+    return (
+      <div key={fieldKey} className="flex flex-col gap-1">
+        <label className="font-body text-xs text-text-secondary">
+          {label}
+          {required && <span className="text-danger ml-1">*</span>}
+        </label>
+        <select
+          value={mapping[fieldKey]}
+          onChange={(e) => handleFieldChange(fieldKey, e.target.value)}
+          className="bg-input-bg border border-border-subtle rounded px-3 py-2 text-text-primary font-body text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+        >
+          <option value="">— Nincs hozzárendelve —</option>
+          {columnOptions.map((opt) => (
+            <option
+              key={opt.value}
+              value={opt.value}
+              disabled={usedColumns.has(opt.value) && mapping[fieldKey] !== opt.value}
+            >
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        {hintText && (
+          <span className="font-body text-xs text-blue-400/70 italic">
+            → {hintText}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -140,6 +160,7 @@ function ColumnMappingDialog({
             </svg>
             Oszlopok automatikusan felismerve
             {detectedType && <span>— Típus: <strong>{detectedType}</strong></span>}
+            {!detectedType && detectedCategories?.length > 0 && <span>— Típusok: <strong>{detectedCategories.join(', ')}</strong></span>}
           </div>
         )}
 
@@ -196,12 +217,22 @@ function ColumnMappingDialog({
                             ? String(row[colIdx]).trim()
                             : '';
                         }
+                        let fallbackText = null;
+                        if (!cellValue && mapping[field.key] === '') {
+                          if (field.key === 'type' && detectedType) {
+                            fallbackText = detectedType;
+                          } else if (field.key === 'type' && row._categoryType) {
+                            fallbackText = row._categoryType;
+                          } else if (field.fallback) {
+                            fallbackText = field.fallback;
+                          }
+                        }
                         return (
                           <td
                             key={field.key}
-                            className={`py-1.5 px-2 ${cellValue ? 'text-text-primary' : 'text-text-secondary/40 italic'}`}
+                            className={`py-1.5 px-2 ${cellValue ? 'text-text-primary' : fallbackText ? 'text-blue-400/70 italic text-xs' : 'text-text-secondary/40 italic'}`}
                           >
-                            {cellValue || '—'}
+                            {cellValue || (fallbackText || '—')}
                           </td>
                         );
                       })}

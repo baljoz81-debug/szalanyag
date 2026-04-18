@@ -6,7 +6,7 @@ const COLUMN_BLACKLIST = ['rajzszám', 'rajzszam', 'megnevezés', 'megnevezes', 
 
 // Oszlop-kulcsszavak az automatikus felismeréshez (kis-nagybetű érzéketlen)
 const COLUMN_PATTERNS = {
-  quality:   ['anyagminőség', 'anyagminoseg', 'minőség', 'minoseg', 'quality'],
+  quality:   ['anyagminőség', 'anyagminoseg', 'minőség', 'minoseg', 'quality', 'anyag'],
   type:      ['típus', 'tipus', 'type', 'anyagtípus'],
   size:      ['méret', 'meret', 'size', 'átmérő', 'atmero', 'profil', 'dimenzió', 'magasság', 'magassag', 'height', 'x'],
   size2:     ['szélesség', 'szelesseg', 'width', 'b', 'y'],
@@ -146,6 +146,98 @@ function isDataRow(row) {
 }
 
 /**
+ * Anyaglista formátum felismerése: a fejléc tartalmazza a "rajzszám" oszlopot,
+ * ÉS vannak kategória sorok az adatban.
+ */
+function isAnyaglistaFormat(headerRow, dataRows, mapping) {
+  const hasRajzszam = headerRow.some((cell) => {
+    const cellStr = String(cell).toLowerCase().trim();
+    return cellStr.includes('rajzszám') || cellStr.includes('rajzszam');
+  });
+  if (!hasRajzszam) return false;
+
+  // Csak akkor anyaglista, ha ténylegesen vannak kategória sorok
+  return dataRows.some((row) => isCategoryRow(row, mapping));
+}
+
+/**
+ * Kategória sor felismerése az anyaglista formátumban.
+ * Kategória sor: A oszlopban van érték (anyagtípus neve), B üres,
+ * és a Hossz/Db. oszlopok (cutLength, quantity) üresek.
+ */
+function isCategoryRow(row, mapping) {
+  const colA = String(row[0] ?? '').trim();
+  const colB = String(row[1] ?? '').trim();
+  if (!colA || colB) return false;
+
+  // Hossz és Db. oszlopok üresek
+  const cutLengthVal = mapping.cutLength !== undefined ? String(row[mapping.cutLength] ?? '').trim() : '';
+  const quantityVal = mapping.quantity !== undefined ? String(row[mapping.quantity] ?? '').trim() : '';
+  if (cutLengthVal || quantityVal) return false;
+
+  return true;
+}
+
+/**
+ * Anyaglista formátum feldolgozása: kategória sorokból típust rendel az adatsorokhoz.
+ * Visszaadja a feldolgozott adatsorokat, ahol minden sor kap egy _categoryType mezőt.
+ */
+function preprocessAnyaglista(dataRows, mapping, knownTypes) {
+  let currentCategory = '';
+  const result = [];
+  const categories = [];
+
+  for (const row of dataRows) {
+    if (isCategoryRow(row, mapping)) {
+      const rawCategory = String(row[0]).trim();
+      // Megpróbáljuk a knownTypes-ból a legközelebbi egyezést találni
+      const matched = matchCategoryToKnownType(rawCategory, knownTypes);
+      currentCategory = matched || rawCategory;
+      if (!categories.includes(currentCategory)) {
+        categories.push(currentCategory);
+      }
+      continue; // kategória sort nem adjuk tovább
+    }
+    // Hozzácsatoljuk a kategória típust a sorhoz
+    row._categoryType = currentCategory;
+    result.push(row);
+  }
+
+  return { rows: result, categories };
+}
+
+/**
+ * Kategória név egyeztetése a beállításokban lévő típusnevekkel.
+ * Prefix-alapú egyeztetés, min 3 karakter.
+ */
+function matchCategoryToKnownType(categoryName, knownTypes) {
+  if (!knownTypes || knownTypes.length === 0) return '';
+
+  const catLower = categoryName.toLowerCase();
+  let bestMatch = '';
+  let bestLen = 0;
+
+  for (const typeName of knownTypes) {
+    const typeNameLower = typeName.toLowerCase();
+    const minLen = Math.min(catLower.length, typeNameLower.length);
+    if (minLen < 3) continue;
+
+    let matchLen = 0;
+    for (let i = 0; i < minLen; i++) {
+      if (catLower[i] === typeNameLower[i]) matchLen++;
+      else break;
+    }
+
+    if (matchLen >= 3 && matchLen > bestLen) {
+      bestLen = matchLen;
+      bestMatch = typeName;
+    }
+  }
+
+  return bestMatch;
+}
+
+/**
  * Szám mező validálása és konvertálása.
  * Visszaad: { value: number|'', warning: string|null }
  */
@@ -167,20 +259,18 @@ function parseNumericField(rawValue, fieldLabel) {
   }
 
   const intVal = Math.round(num);
-  const warning = !Number.isInteger(num)
-    ? `${num} → ${intVal} kerekítve (${fieldLabel})`
-    : null;
 
-  return { value: intVal, warning };
+  return { value: intVal, warning: null };
 }
 
 /**
  * Sorok konvertálása a ProductsStore formátumra a mapping alapján.
- * Visszaad: { rows: array, warnings: string[], warningRowIds: Set<string> }
+ * Visszaad: { rows: array, warnings: string[], warningCells: Map<string, Set<string>> }
+ * warningCells: rowId → Set of hibás mező kulcsok (pl. 'cutLength', 'quantity', 'size')
  */
 function convertRows(dataRows, mapping) {
   const warnings = [];
-  const warningRowIds = new Set();
+  const warningCells = new Map();
   let skippedEmpty = 0;
 
   const rows = dataRows.filter(isDataRow).map((row, rowIdx) => {
@@ -197,8 +287,18 @@ function convertRows(dataRows, mapping) {
 
     const id = String(Date.now()) + Math.random().toString(36).slice(2, 6);
 
-    // Figyelmeztetések gyűjtése (soronként)
-    const rowWarnings = [cutLengthResult.warning, quantityResult.warning].filter(Boolean);
+    // Figyelmeztetések gyűjtése (soronként + cellánként)
+    const rowWarnings = [];
+    const cellKeys = new Set();
+
+    if (cutLengthResult.warning) {
+      rowWarnings.push(cutLengthResult.warning);
+      cellKeys.add('cutLength');
+    }
+    if (quantityResult.warning) {
+      rowWarnings.push(quantityResult.warning);
+      cellKeys.add('quantity');
+    }
 
     // Összetett méret: size + size2 + size3 összefűzése "x" elválasztóval
     const sizeParts = [getValue('size'), getValue('size2'), getValue('size3')].filter(Boolean);
@@ -209,24 +309,27 @@ function convertRows(dataRows, mapping) {
     if (hasAnyData) {
       if (!size && mapping.size !== undefined) {
         rowWarnings.push('hiányzó méret');
+        cellKeys.add('size');
       }
       if (!cutLengthResult.value && !cutLengthResult.warning) {
         rowWarnings.push('hiányzó szabási hossz');
+        cellKeys.add('cutLength');
       }
       if (!quantityResult.value && !quantityResult.warning) {
         rowWarnings.push('hiányzó darabszám');
+        cellKeys.add('quantity');
       }
     }
 
     if (rowWarnings.length > 0) {
       warnings.push(`${rowIdx + 1}. sor: ${rowWarnings.join('; ')}`);
-      warningRowIds.add(id);
+      warningCells.set(id, cellKeys);
     }
 
     return {
       id,
       quality: getValue('quality') || 'S235',
-      type: getValue('type'),
+      type: getValue('type') || row._categoryType || '',
       size,
       cutLength: cutLengthResult.value,
       quantity: quantityResult.value,
@@ -241,7 +344,7 @@ function convertRows(dataRows, mapping) {
     warnings.unshift(`${skippedEmpty} sor kihagyva (nincs érdemi adat)`);
   }
 
-  return { rows, warnings, warningRowIds };
+  return { rows, warnings, warningCells };
 }
 
 /**
@@ -298,7 +401,7 @@ function detectTypeFromTitle(titleRows, knownTypes) {
  * @param {string} detectedType - Felismert típusnév (opcionális)
  */
 export function applyMapping(dataRows, mapping, detectedType = '') {
-  const { rows, warnings, warningRowIds } = convertRows(dataRows, mapping);
+  const { rows, warnings, warningCells } = convertRows(dataRows, mapping);
 
   if (detectedType) {
     for (const row of rows) {
@@ -306,7 +409,7 @@ export function applyMapping(dataRows, mapping, detectedType = '') {
     }
   }
 
-  return { rows, warnings, warningRowIds };
+  return { rows, warnings, warningCells };
 }
 
 /**
@@ -323,8 +426,17 @@ export function importSheet(wb, sheetName, knownTypes = []) {
   if (headerIdx >= 0) {
     const headerRow = allRows[headerIdx];
     const mapping = mapColumnsByHeader(headerRow);
-    const dataRows = allRows.slice(headerIdx + 1);
+    let dataRows = allRows.slice(headerIdx + 1);
     const detectedType = detectTypeFromTitle(allRows.slice(0, headerIdx), knownTypes);
+
+    // Anyaglista formátum: kategória sorokból típust olvasunk
+    const anyaglista = isAnyaglistaFormat(headerRow, dataRows, mapping);
+    let detectedCategories = null;
+    if (anyaglista) {
+      const result = preprocessAnyaglista(dataRows, mapping, knownTypes);
+      dataRows = result.rows;
+      detectedCategories = result.categories;
+    }
 
     return {
       mapping,
@@ -332,7 +444,8 @@ export function importSheet(wb, sheetName, knownTypes = []) {
       dataRows,
       sheetName,
       autoDetected: true,
-      detectedType: detectedType || null,
+      detectedType: anyaglista ? null : (detectedType || null),
+      detectedCategories,
       columnCount: headerRow.length,
     };
   }

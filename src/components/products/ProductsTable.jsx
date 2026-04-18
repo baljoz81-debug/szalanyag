@@ -36,7 +36,7 @@ function SelectCell({ value, options, placeholder, onChange }) {
   );
 }
 
-function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow, warningRowIds }) {
+function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow, warningCells }) {
   const tableRef = useRef(null);
 
   // Beállításokból olvassuk a legördülő opciókat
@@ -99,11 +99,13 @@ function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow, warningRowId
         </thead>
         <tbody>
           {rows.map((row, rowIndex) => (
-            <tr key={row.id} className={`border-b border-border-subtle/50 ${warningRowIds?.has(row.id) ? 'bg-yellow-500/25 border-l-2 border-l-yellow-400' : 'hover:bg-panel-hover/30'}`}>
-              {COLUMNS.map((col, colIndex) => (
+            <tr key={row.id} className={`border-b border-border-subtle/50 ${warningCells?.has(row.id) ? 'bg-yellow-500/10 border-l-2 border-l-yellow-400' : 'hover:bg-panel-hover/30'}`}>
+              {COLUMNS.map((col, colIndex) => {
+                const isCellWarning = warningCells?.get(row.id)?.has(col.key);
+                return (
                 <td
                   key={col.key}
-                  className="px-1 py-0.5"
+                  className={`px-1 py-0.5 ${isCellWarning ? 'bg-yellow-500/30 ring-1 ring-inset ring-yellow-400/60 rounded' : ''}`}
                   data-row={rowIndex}
                   data-col={colIndex}
                 >
@@ -132,7 +134,8 @@ function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow, warningRowId
                     />
                   )}
                 </td>
-              ))}
+                );
+              })}
               <td className="px-1 py-0.5 text-center">
                 <IconButton
                   onClick={() => onRemoveRow(row.id)}

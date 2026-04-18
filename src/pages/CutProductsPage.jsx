@@ -91,7 +91,7 @@ function CutProductsPage() {
   const [pendingSheets, setPendingSheets] = useState(null);    // { wb, sheetNames } — munkalapválasztó
   const [pendingMapping, setPendingMapping] = useState(null);  // P9: mapping dialog adatai
   const [pendingImport, setPendingImport] = useState(null);    // { rows, sheetName, detectedType, warnings } — import mód dialog
-  const [warningRowIds, setWarningRowIds] = useState(new Set()); // hibás sorok kiemelése
+  const [warningCells, setWarningCells] = useState(new Map()); // hibás cellák: rowId → Set<fieldKey>
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -102,13 +102,13 @@ function CutProductsPage() {
     return rows.some((r) => r.quality || r.type || r.size || r.cutLength || r.quantity);
   };
 
-  const finalizeImport = useCallback((importedRows, sheetName, detectedType, mode, warnings = [], newWarningIds = new Set()) => {
+  const finalizeImport = useCallback((importedRows, sheetName, detectedType, mode, warnings = [], newWarningCells = new Map()) => {
     if (mode === 'replace') {
       setRows(importedRows);
-      setWarningRowIds(newWarningIds);
+      setWarningCells(newWarningCells);
     } else {
       appendRows(importedRows);
-      setWarningRowIds((prev) => new Set([...prev, ...newWarningIds]));
+      setWarningCells((prev) => new Map([...prev, ...newWarningCells]));
     }
     const typeInfo = detectedType ? ` Típus: ${detectedType}.` : '';
     const modeText = mode === 'append' ? ' (hozzáfűzve)' : '';
@@ -123,7 +123,7 @@ function CutProductsPage() {
   // P9: Mapping dialog jóváhagyása → sorok konvertálása → import mód (ha kell)
   const handleMappingApply = useCallback((mapping, detectedType) => {
     const { dataRows, sheetName } = pendingMapping;
-    const { rows: importedRows, warnings, warningRowIds: newWarningIds } = applyMapping(dataRows, mapping, detectedType);
+    const { rows: importedRows, warnings, warningCells: newWarningCells } = applyMapping(dataRows, mapping, detectedType);
 
     if (importedRows.length === 0) {
       setImportMsg({ type: 'error', text: 'A kiválasztott oszlopokból nem nyerhető ki feldolgozható adat.' });
@@ -134,9 +134,9 @@ function CutProductsPage() {
     setPendingMapping(null);
 
     if (hasExistingData()) {
-      setPendingImport({ rows: importedRows, sheetName, detectedType, warnings, warningRowIds: newWarningIds });
+      setPendingImport({ rows: importedRows, sheetName, detectedType, warnings, warningCells: newWarningCells });
     } else {
-      finalizeImport(importedRows, sheetName, detectedType, 'replace', warnings, newWarningIds);
+      finalizeImport(importedRows, sheetName, detectedType, 'replace', warnings, newWarningCells);
     }
   }, [pendingMapping, finalizeImport]);
 
@@ -264,38 +264,36 @@ function CutProductsPage() {
           rows={rows}
           onUpdateCell={(id, key, val) => {
             updateCell(id, key, val);
-            // Ha a sor ki volt emelve és most már érvényes, eltávolítjuk a kiemelést
-            if (warningRowIds.has(id)) {
-              const row = rows.find((r) => r.id === id);
-              if (row) {
-                const updated = { ...row, [key]: val };
-                const cutVal = Number(updated.cutLength);
-                const qtyVal = Number(updated.quantity);
-                const sizeOk = updated.size !== '';
-                const cutOk = updated.cutLength !== '' && Number.isInteger(cutVal) && cutVal > 0;
-                const qtyOk = updated.quantity !== '' && Number.isInteger(qtyVal) && qtyVal > 0;
-                if (sizeOk && cutOk && qtyOk) {
-                  setWarningRowIds((prev) => {
-                    const next = new Set(prev);
+            // Ha a cella ki volt emelve és most javították, eltávolítjuk a kiemelést
+            if (warningCells.has(id)) {
+              const cellKeys = warningCells.get(id);
+              if (cellKeys.has(key)) {
+                setWarningCells((prev) => {
+                  const next = new Map(prev);
+                  const updatedKeys = new Set(cellKeys);
+                  updatedKeys.delete(key);
+                  if (updatedKeys.size === 0) {
                     next.delete(id);
-                    return next;
-                  });
-                }
+                  } else {
+                    next.set(id, updatedKeys);
+                  }
+                  return next;
+                });
               }
             }
           }}
           onAddRow={addRow}
           onRemoveRow={(id) => {
             removeRow(id);
-            if (warningRowIds.has(id)) {
-              setWarningRowIds((prev) => {
-                const next = new Set(prev);
+            if (warningCells.has(id)) {
+              setWarningCells((prev) => {
+                const next = new Map(prev);
                 next.delete(id);
                 return next;
               });
             }
           }}
-          warningRowIds={warningRowIds}
+          warningCells={warningCells}
         />
       </SectionCard>
 
@@ -317,6 +315,7 @@ function CutProductsPage() {
           initialMapping={pendingMapping.mapping}
           autoDetected={pendingMapping.autoDetected}
           detectedType={pendingMapping.detectedType}
+          detectedCategories={pendingMapping.detectedCategories}
           sheetName={pendingMapping.sheetName}
           onApply={handleMappingApply}
           onCancel={() => setPendingMapping(null)}
@@ -327,8 +326,8 @@ function CutProductsPage() {
       {pendingImport && (
         <ImportModeDialog
           rowCount={pendingImport.rows.length}
-          onReplace={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'replace', pendingImport.warnings, pendingImport.warningRowIds)}
-          onAppend={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'append', pendingImport.warnings, pendingImport.warningRowIds)}
+          onReplace={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'replace', pendingImport.warnings, pendingImport.warningCells)}
+          onAppend={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'append', pendingImport.warnings, pendingImport.warningCells)}
           onCancel={() => setPendingImport(null)}
         />
       )}
