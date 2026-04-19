@@ -1,11 +1,13 @@
-// Szabott termékek oldal — P5–P9: szerkeszthető táblázat + Excel/CSV import + oszlop-hozzárendelés
+// Szabott termékek oldal — P5–P10: szerkeszthető táblázat + Excel/CSV import + PDF import + oszlop-hozzárendelés
 import { useRef, useState, useCallback } from 'react';
 import useProductsStore from '../store/productsStore';
 import useSettingsStore from '../store/settingsStore';
 import SectionCard from '../components/ui/SectionCard';
 import ProductsTable from '../components/products/ProductsTable';
 import ColumnMappingDialog from '../components/products/ColumnMappingDialog';
-import { validateFileType, parseWorkbook, importSheet, applyMapping } from '../utils/excelImport';
+import PageRangeDialog from '../components/products/PageRangeDialog';
+import { validateFileType, parseWorkbook, importSheet, importRows, applyMapping } from '../utils/excelImport';
+import { openPdf, extractPagesAsTable, validatePdfFileType } from '../utils/pdfImport';
 
 function SheetSelectorDialog({ sheetNames, onSelect, onCancel }) {
   return (
@@ -86,15 +88,21 @@ function CutProductsPage() {
   const knownTypes = barLengths.map((b) => b.type).filter(Boolean);
 
   const fileInputRef = useRef(null);
+  const pdfInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState(null);   // { type, text, warnings? }
   const [pendingSheets, setPendingSheets] = useState(null);    // { wb, sheetNames } — munkalapválasztó
   const [pendingMapping, setPendingMapping] = useState(null);  // P9: mapping dialog adatai
   const [pendingImport, setPendingImport] = useState(null);    // { rows, sheetName, detectedType, warnings } — import mód dialog
   const [warningCells, setWarningCells] = useState(new Map()); // hibás cellák: rowId → Set<fieldKey>
+  const [pendingPdf, setPendingPdf] = useState(null);          // { doc, numPages, fileName } — PDF oldalválasztó
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const handlePdfImportClick = () => {
+    pdfInputRef.current?.click();
   };
 
   // Van-e érdemi adat a táblázatban?
@@ -186,6 +194,65 @@ function CutProductsPage() {
     }
   }, [knownTypes]);
 
+  // ─── PDF import ───────────────────────────────────────────────────────
+
+  const handlePdfFileChange = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    e.target.value = '';
+
+    if (!validatePdfFileType(file.name)) {
+      setImportMsg({ type: 'error', text: 'Csak .pdf fájlok támogatottak.' });
+      return;
+    }
+
+    setImporting(true);
+    setImportMsg(null);
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const { doc, numPages } = await openPdf(arrayBuffer);
+
+      if (numPages === 0) {
+        setImportMsg({ type: 'error', text: 'A PDF nem tartalmaz oldalakat.' });
+        setImporting(false);
+        return;
+      }
+
+      // Oldalválasztó dialog megjelenítése
+      setPendingPdf({ doc, numPages, fileName: file.name });
+    } catch (err) {
+      setImportMsg({ type: 'error', text: err.message || 'Hiba a PDF megnyitásakor.' });
+    } finally {
+      setImporting(false);
+    }
+  }, []);
+
+  const handlePdfPageConfirm = useCallback(async (pages) => {
+    const { doc, fileName } = pendingPdf;
+    setPendingPdf(null);
+    setImporting(true);
+
+    try {
+      const { allRows } = await extractPagesAsTable(doc, pages);
+
+      if (allRows.length === 0) {
+        setImportMsg({ type: 'error', text: 'A kiválasztott oldalakból nem nyerhető ki szöveges tartalom. Szkennelt/képes PDF nem támogatott.' });
+        setImporting(false);
+        return;
+      }
+
+      const sourceName = `${fileName} (${pages.length === 1 ? `${pages[0]}. oldal` : `${pages[0]}–${pages[pages.length - 1]}. oldal`})`;
+      const result = importRows(allRows, sourceName, knownTypes);
+      setPendingMapping(result);
+    } catch (err) {
+      setImportMsg({ type: 'error', text: err.message || 'Hiba a PDF feldolgozásakor.' });
+    } finally {
+      setImporting(false);
+    }
+  }, [pendingPdf, knownTypes]);
+
   return (
     <main className="max-w-7xl mx-auto px-4 py-6">
       <h1 className="font-heading text-2xl text-text-primary mb-1">
@@ -223,11 +290,45 @@ function CutProductsPage() {
             {importing ? 'Betöltés...' : 'Excel betöltése'}
           </button>
 
+          <button
+            type="button"
+            onClick={handlePdfImportClick}
+            disabled={importing}
+            className="flex items-center gap-2 px-4 py-2 bg-panel-hover text-text-primary border border-border-subtle rounded font-body text-sm hover:bg-input-bg hover:border-accent transition-colors disabled:opacity-50"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            {importing ? 'Betöltés...' : 'PDF betöltése'}
+          </button>
+
           <input
             ref={fileInputRef}
             type="file"
             accept=".xlsx,.xls,.csv"
             onChange={handleFileChange}
+            className="hidden"
+          />
+
+          <input
+            ref={pdfInputRef}
+            type="file"
+            accept=".pdf"
+            onChange={handlePdfFileChange}
             className="hidden"
           />
 
@@ -296,6 +397,15 @@ function CutProductsPage() {
           warningCells={warningCells}
         />
       </SectionCard>
+
+      {/* PDF oldalválasztó dialog */}
+      {pendingPdf && (
+        <PageRangeDialog
+          numPages={pendingPdf.numPages}
+          onConfirm={handlePdfPageConfirm}
+          onCancel={() => setPendingPdf(null)}
+        />
+      )}
 
       {/* Munkalapválasztó dialog */}
       {pendingSheets && (

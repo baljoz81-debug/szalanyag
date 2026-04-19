@@ -7,7 +7,7 @@ const COLUMN_BLACKLIST = ['rajzszám', 'rajzszam', 'megnevezés', 'megnevezes', 
 // Oszlop-kulcsszavak az automatikus felismeréshez (kis-nagybetű érzéketlen)
 const COLUMN_PATTERNS = {
   quality:   ['anyagminőség', 'anyagminoseg', 'minőség', 'minoseg', 'quality', 'anyag'],
-  type:      ['típus', 'tipus', 'type', 'anyagtípus'],
+  type:      ['típus', 'tipus', 'type', 'anyagtípus', 'szelvény', 'szelveny'],
   size:      ['méret', 'meret', 'size', 'átmérő', 'atmero', 'profil', 'dimenzió', 'magasság', 'magassag', 'height', 'x'],
   size2:     ['szélesség', 'szelesseg', 'width', 'b', 'y'],
   size3:     ['falvastagság', 'falvastagsag', 'falv.', 'vastagság', 'vastagsag', 'wall', 'thickness', 's'],
@@ -70,7 +70,7 @@ export function parseSheet(wb, sheetName) {
  * Fejléc-sor keresése: megkeresi azt a sort, amelyik a legtöbb oszlopnevet tartalmazza.
  * Visszaadja a fejléc sor indexét, vagy -1 ha nem találtunk fejlécet.
  */
-function findHeaderRowIndex(allRows) {
+export function findHeaderRowIndex(allRows) {
   let bestIndex = -1;
   let bestScore = 0;
 
@@ -108,7 +108,7 @@ function findHeaderRowIndex(allRows) {
  * Oszlop-leképezés fejléc alapján.
  * Visszaad egy mapping-et: { quality: colIdx, type: colIdx, ... }
  */
-function mapColumnsByHeader(headerRow) {
+export function mapColumnsByHeader(headerRow) {
   const mapping = {};
 
   headerRow.forEach((cell, colIdx) => {
@@ -149,7 +149,7 @@ function isDataRow(row) {
  * Anyaglista formátum felismerése: a fejléc tartalmazza a "rajzszám" oszlopot,
  * ÉS vannak kategória sorok az adatban.
  */
-function isAnyaglistaFormat(headerRow, dataRows, mapping) {
+export function isAnyaglistaFormat(headerRow, dataRows, mapping) {
   const hasRajzszam = headerRow.some((cell) => {
     const cellStr = String(cell).toLowerCase().trim();
     return cellStr.includes('rajzszám') || cellStr.includes('rajzszam');
@@ -182,7 +182,7 @@ function isCategoryRow(row, mapping) {
  * Anyaglista formátum feldolgozása: kategória sorokból típust rendel az adatsorokhoz.
  * Visszaadja a feldolgozott adatsorokat, ahol minden sor kap egy _categoryType mezőt.
  */
-function preprocessAnyaglista(dataRows, mapping, knownTypes) {
+export function preprocessAnyaglista(dataRows, mapping, knownTypes) {
   let currentCategory = '';
   const result = [];
   const categories = [];
@@ -353,7 +353,7 @@ function convertRows(dataRows, mapping) {
  * Pl. "Köracél szabásjegyzék" → "Köranyag" (ha "Kör" prefix egyezik)
  *     "Laposvas szabásjegyzék" → "Laposacél" (ha "Lapos" prefix egyezik)
  */
-function detectTypeFromTitle(titleRows, knownTypes) {
+export function detectTypeFromTitle(titleRows, knownTypes) {
   if (!knownTypes || knownTypes.length === 0) return '';
 
   // Cím sorok szövegét összefűzzük
@@ -410,6 +410,58 @@ export function applyMapping(dataRows, mapping, detectedType = '') {
   }
 
   return { rows, warnings, warningCells };
+}
+
+/**
+ * Nyers 2D tömb feldolgozása: fejléc keresés, mapping, anyaglista detektálás.
+ * Közös logika az Excel és PDF importhoz.
+ * @param {any[][]} allRows - Nyers adatsorok (2D tömb)
+ * @param {string} sourceName - Forrás neve (munkalap vagy fájlnév)
+ * @param {string[]} knownTypes - Beállításokban lévő típusnevek
+ */
+export function importRows(allRows, sourceName, knownTypes = []) {
+  const headerIdx = findHeaderRowIndex(allRows);
+
+  if (headerIdx >= 0) {
+    const headerRow = allRows[headerIdx];
+    const mapping = mapColumnsByHeader(headerRow);
+    let dataRows = allRows.slice(headerIdx + 1);
+    const detectedType = detectTypeFromTitle(allRows.slice(0, headerIdx), knownTypes);
+
+    const anyaglista = isAnyaglistaFormat(headerRow, dataRows, mapping);
+    let detectedCategories = null;
+    if (anyaglista) {
+      const result = preprocessAnyaglista(dataRows, mapping, knownTypes);
+      dataRows = result.rows;
+      detectedCategories = result.categories;
+    }
+
+    return {
+      mapping,
+      headerRow: headerRow.map(String),
+      dataRows,
+      sheetName: sourceName,
+      autoDetected: true,
+      detectedType: anyaglista ? null : (detectedType || null),
+      detectedCategories,
+      columnCount: headerRow.length,
+    };
+  }
+
+  const maxCols = Math.max(...allRows.map((r) => r.length));
+  const mapping = maxCols === 5
+    ? { quality: 0, type: 1, size: 2, cutLength: 3, quantity: 4 }
+    : {};
+
+  return {
+    mapping,
+    headerRow: null,
+    dataRows: allRows,
+    sheetName: sourceName,
+    autoDetected: maxCols === 5,
+    detectedType: null,
+    columnCount: maxCols,
+  };
 }
 
 /**
