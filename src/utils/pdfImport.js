@@ -150,6 +150,32 @@ function computeLabelXThreshold(rowMap) {
   return maxLabelX + 10;
 }
 
+// ─── Cím sorok kinyerése (típus detektáláshoz) ─────────────────────────
+
+/**
+ * Cím sorok kinyerése a rowMap-ből — a felső sorok, amelyek a tábla címét
+ * tartalmazzák (pl. "Laposvas szabásjegyzék"). Megáll az első felismert
+ * mező-címke sornál. Ugyanaz a logika, mint az Excel importban a
+ * detectTypeFromTitle: a fejléc előtti sorokat vizsgáljuk.
+ */
+function extractTitleRows(rowMap) {
+  const titleRows = [];
+
+  for (const [, rowItems] of rowMap) {
+    if (rowItems.length === 0) continue;
+    const sorted = [...rowItems].sort((a, b) => a.x - b.x);
+    const first = sorted[0];
+
+    // Ha ez már egy felismert mező-címke sor, megállunk
+    if (matchLabel(first.str)) break;
+
+    // Cím sor: egyszerű szöveg-tömb
+    titleRows.push(sorted.map((it) => it.str.trim()));
+  }
+
+  return titleRows;
+}
+
 // ─── Transzponált tábla építés ──────────────────────────────────────────
 
 /**
@@ -356,11 +382,21 @@ export async function extractPageAsTable(doc, pageNum) {
 
   const isTransposed = detectTransposedLayout(rowMap);
 
+  // Cím sorok kinyerése a nyers rowMap-ből (pl. "Laposvas szabásjegyzék")
+  // A buildNormalTable az oszlophatárokkal széttörheti a cím szövegét,
+  // ezért a nyers item-ekből kell kiolvasni és visszahelyettesíteni.
+  const titleRows = extractTitleRows(rowMap);
+
   let table;
   if (isTransposed) {
-    table = buildTransposedTable(rowMap);
+    table = [...titleRows, ...buildTransposedTable(rowMap)];
   } else {
     table = buildNormalTable(rowMap, items);
+    // A normál tábla első N sora a cím sorok hibásan feldarabolva —
+    // cseréljük a nyers, helyes cím sorokra
+    if (titleRows.length > 0) {
+      table = [...titleRows, ...table.slice(titleRows.length)];
+    }
   }
 
   table = filterHeaderFooterRows(table);
