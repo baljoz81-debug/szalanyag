@@ -107,6 +107,7 @@ function matchLabel(str) {
   }
 
   for (const [label, field] of Object.entries(TRANSPOSED_LABELS)) {
+    if (label.length === 1) continue; // egybetűs labelek csak pontos egyezésre (fent kezelve)
     if (firstWord === label || firstWord.startsWith(label) || (label.startsWith(firstWord) && firstWord.length >= 2)) {
       return field;
     }
@@ -166,14 +167,28 @@ function extractTitleRows(rowMap) {
     const sorted = [...rowItems].sort((a, b) => a.x - b.x);
     const first = sorted[0];
 
-    // Ha ez már egy felismert mező-címke sor, megállunk
-    if (matchLabel(first.str)) break;
+    // Címke sorok átugrása (nem break — a cím bárhol lehet a PDF-ben)
+    if (matchLabel(first.str)) continue;
 
-    // Cím sor: egyszerű szöveg-tömb
+    // Csak 1-2 elemes sorok lehetnek címek (sok elem = adatsor)
+    if (sorted.length > 2) continue;
+
+    const text = sorted.map((it) => it.str.trim()).join(' ');
+
+    // Rövid töredékek kihagyása (PDF szétdarabolási artefaktumok)
+    if (text.length < 3) continue;
+
+    // Tisztán szám/méret sorok kihagyása
+    if (/^[\d.,x×\s/]+$/.test(text)) continue;
+
+    // "Oldal N" oldalszám sorok kihagyása
+    if (/^oldal\s+\d+$/i.test(text)) continue;
+
     titleRows.push(sorted.map((it) => it.str.trim()));
   }
 
-  return titleRows;
+  // Max 3 sor, hogy a fejléc a findHeaderRowIndex keresési ablakában maradjon
+  return titleRows.slice(0, 3);
 }
 
 // ─── Transzponált tábla építés ──────────────────────────────────────────
