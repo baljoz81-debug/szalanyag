@@ -19,8 +19,9 @@ const DEFAULT_BAR_LENGTHS = [
   { id: '2', type: 'Szögacél',              length: 6000, deletable: true  },
   { id: '3', type: 'Köranyag',              length: 3000, deletable: true  },
   { id: '4', type: 'Négyszögrúd',           length: 6000, deletable: true  },
-  { id: '5', type: 'Csövek',               length: 6000, deletable: true  },
-  { id: '6', type: 'Egyéb / alapértelmezett', length: 6000, deletable: false },
+  { id: '5', type: 'Zártszelvény',          length: 6000, deletable: true  },
+  { id: '6', type: 'Csövek',               length: 6000, deletable: true  },
+  { id: '7', type: 'Egyéb / alapértelmezett', length: 6000, deletable: false },
 ];
 
 const DEFAULT_SETTINGS = {
@@ -33,9 +34,27 @@ const DEFAULT_SETTINGS = {
 const useSettingsStore = create((set, get) => {
   // App indulásakor localStorage-ból töltünk, vagy az alapértelmezetteket használjuk
   const saved = loadFromStorage(STORAGE_KEY);
-  const initial = saved
+  let initial = saved
     ? { ...DEFAULT_SETTINGS, ...saved }
     : { ...DEFAULT_SETTINGS };
+
+  // Hiányzó default típusok pótlása meglévő beállításokhoz
+  if (saved?.barLengths) {
+    const existingTypes = saved.barLengths.map((b) => b.type.toLowerCase());
+    for (const def of DEFAULT_BAR_LENGTHS) {
+      if (def.type === 'Egyéb / alapértelmezett') continue;
+      if (!existingTypes.includes(def.type.toLowerCase())) {
+        // Az "Egyéb" sor elé beszúrjuk
+        const egyebIdx = initial.barLengths.findIndex((b) => !b.deletable);
+        const newItem = { ...def, id: String(Date.now()) + def.id };
+        if (egyebIdx >= 0) {
+          initial.barLengths.splice(egyebIdx, 0, newItem);
+        } else {
+          initial.barLengths.push(newItem);
+        }
+      }
+    }
+  }
 
   return {
     // --- Állapot ---

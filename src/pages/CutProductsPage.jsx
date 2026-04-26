@@ -235,7 +235,7 @@ function CutProductsPage() {
     setImporting(true);
 
     try {
-      const { allRows } = await extractPagesAsTable(doc, pages);
+      const { allRows } = await extractPagesAsTable(doc, pages, knownTypes);
 
       if (allRows.length === 0) {
         setImportMsg({ type: 'error', text: 'A kiválasztott oldalakból nem nyerhető ki szöveges tartalom. Szkennelt/képes PDF nem támogatott.' });

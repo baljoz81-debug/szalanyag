@@ -27,7 +27,10 @@ function matchPattern(cellStr, pattern) {
     // "x (mm)", "db.", "db " stb.
     return cellStr.startsWith(pattern) && /^[\s(.)]/.test(cellStr.slice(pattern.length));
   }
-  return cellStr.includes(pattern);
+  if (cellStr.includes(pattern)) return true;
+  // Csonkolt szöveg kezelése (pl. PDF: "átmér" → "átmérő")
+  if (cellStr.length >= 4 && pattern.startsWith(cellStr)) return true;
+  return false;
 }
 
 /**
@@ -224,7 +227,7 @@ function matchCategoryToKnownType(categoryName, knownTypes) {
 
     let matchLen = 0;
     for (let i = 0; i < minLen; i++) {
-      if (catLower[i] === typeNameLower[i]) matchLen++;
+      if (catLower[i] === typeNameLower[i] || normalizeHunChar(catLower[i]) === normalizeHunChar(typeNameLower[i])) matchLen++;
       else break;
     }
 
@@ -307,7 +310,7 @@ function convertRows(dataRows, mapping) {
     // Hiányzó kötelező mezők ellenőrzése
     const hasAnyData = size || cutLengthResult.value || quantityResult.value;
     if (hasAnyData) {
-      if (!size && mapping.size !== undefined) {
+      if (!size) {
         rowWarnings.push('hiányzó méret');
         cellKeys.add('size');
       }
@@ -329,7 +332,7 @@ function convertRows(dataRows, mapping) {
     return {
       id,
       quality: getValue('quality') || 'S235',
-      type: getValue('type') || row._categoryType || '',
+      type: getValue('type') || row._categoryType || row._pageType || '',
       size,
       cutLength: cutLengthResult.value,
       quantity: quantityResult.value,
@@ -353,6 +356,13 @@ function convertRows(dataRows, mapping) {
  * Pl. "Köracél szabásjegyzék" → "Köranyag" (ha "Kör" prefix egyezik)
  *     "Laposvas szabásjegyzék" → "Laposacél" (ha "Lapos" prefix egyezik)
  */
+// Magyar ékezetes magánhangzó-párok normalizálása (tőváltás kezelése: cső↔csövek, fű↔füvek)
+function normalizeHunChar(ch) {
+  if (ch === 'ő') return 'ö';
+  if (ch === 'ű') return 'ü';
+  return ch;
+}
+
 export function detectTypeFromTitle(titleRows, knownTypes) {
   if (!knownTypes || knownTypes.length === 0) return '';
 
@@ -379,7 +389,7 @@ export function detectTypeFromTitle(titleRows, knownTypes) {
 
       let matchLen = 0;
       for (let i = 0; i < minLen; i++) {
-        if (word[i] === typeNameLower[i]) matchLen++;
+        if (word[i] === typeNameLower[i] || normalizeHunChar(word[i]) === normalizeHunChar(typeNameLower[i])) matchLen++;
         else break;
       }
 
