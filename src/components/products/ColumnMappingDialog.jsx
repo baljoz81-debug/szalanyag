@@ -97,11 +97,11 @@ function ColumnMappingDialog({
     const fieldDef = APP_FIELDS.find((f) => f.key === fieldKey);
     // Dinamikus hint: type mezőnél a detectedType-ot használjuk, ha van
     let hintText = null;
-    if (mapping[fieldKey] === '') {
+    if (fieldKey === 'type' && detectedCategories?.length > 0) {
+      hintText = detectedCategories.join(', ') + ' (felismert)';
+    } else if (mapping[fieldKey] === '') {
       if (fieldKey === 'type' && detectedType) {
         hintText = `${detectedType} (felismert)`;
-      } else if (fieldKey === 'type' && detectedCategories?.length > 0) {
-        hintText = detectedCategories.join(', ') + ' (felismert)';
       } else if (fieldDef?.fallback) {
         hintText = fieldDef.fallback;
       }
@@ -219,10 +219,10 @@ function ColumnMappingDialog({
                         }
                         let fallbackText = null;
                         if (!cellValue && mapping[field.key] === '') {
-                          if (field.key === 'type' && detectedType) {
+                          if (field.key === 'type' && (row._categoryType || row._pageType)) {
+                            fallbackText = row._categoryType || row._pageType;
+                          } else if (field.key === 'type' && detectedType) {
                             fallbackText = detectedType;
-                          } else if (field.key === 'type' && row._categoryType) {
-                            fallbackText = row._categoryType;
                           } else if (field.fallback) {
                             fallbackText = field.fallback;
                           }

@@ -271,7 +271,7 @@ function buildTransposedTable(rowMap) {
 
   // 2. Minden címkéhez adatgyűjtés: a címke Y-tól a következő címke Y-ig
   //    (vagy az oldal tetejéig, ha nincs következő)
-  const fieldData = new Map(); // field → [{ x, value }]
+  const fieldData = new Map(); // field → [{ x, y, value }]
   const productXPositions = new Set();
 
   for (let i = 0; i < labelInfos.length; i++) {
@@ -288,7 +288,7 @@ function buildTransposedTable(rowMap) {
       for (const item of rowItems) {
         // Csak a jobb oldali elemek (x >= threshold) az adatok
         if (item.x >= labelXThreshold) {
-          dataItems.push({ x: item.x, value: item.str.trim() });
+          dataItems.push({ x: item.x, y: item.y, value: item.str.trim() });
           productXPositions.add(item.x);
         }
       }
@@ -327,19 +327,97 @@ function buildTransposedTable(rowMap) {
   const headerRow = usedFields.map((f) => headerLabelMap[f] || f);
 
   // 5. Táblázat építés: sorok = termékek (X klaszterek), oszlopok = mezők
-  const table = [headerRow];
+  let table = [headerRow];
 
   for (const xCluster of xClusters) {
     const row = usedFields.map((field) => {
       const items = fieldData.get(field) || [];
-      // Megkeressük az ehhez az X klaszterhez tartozó értéket
-      const match = items.find((it) => xCluster.positions.some((p) => Math.abs(p - it.x) <= 5));
-      return match ? match.value : '';
+      // Megkeressük az ehhez az X klaszterhez tartozó értékeket és összefűzzük
+      // (PDF szétdarabolhatja a szöveget, pl. "Cs"+"ő" → "Cső", "Átmér"+"ő" → "Átmérő")
+      const matches = items.filter((it) => xCluster.positions.some((p) => Math.abs(p - it.x) <= 5));
+      if (matches.length === 0) return '';
+      if (matches.length === 1) return matches[0].value;
+      matches.sort((a, b) => a.y - b.y);
+      return matches.map((m) => m.value).join('');
     });
 
     // Csak akkor adjuk hozzá, ha van érdemi adat
     const hasData = row.some((cell) => cell && cell.trim());
     if (hasData) table.push(row);
+  }
+
+  // 6. Fantom-sorok felismerése: többtípusos oldalakon a típus-címke oszlopok
+  //    "termékként" jelennek meg, de valójában alcsoport-határolók.
+  //    Felismerés: a Hossz/Db. mezőben nem szám van, vagy a Méret mezőkben ismert címkeszöveg.
+  const sizeIdx = usedFields.indexOf('size');
+  const size2Idx = usedFields.indexOf('size2');
+  const size3Idx = usedFields.indexOf('size3');
+  const cutLengthIdx = usedFields.indexOf('cutLength');
+  const quantityIdx = usedFields.indexOf('quantity');
+  const rajzszamIdx = usedFields.indexOf('_rajzszam');
+
+  if (table.length > 2) {
+    const LABEL_KEYWORDS = ['szélesség', 'szelesseg', 'magasság', 'magassag', 'méret', 'meret',
+      'átmérő', 'atmero', 'profil', 'vastagság', 'vastagsag', 'falvastagság', 'falvastagsag',
+      'laptáv', 'laptav', 'falv'];
+
+    // Címke-szöveg felismerés: pontos egyezés, tartalmazás, vagy csonkolt prefix
+    const isLabelText = (val) => {
+      const lower = val.toLowerCase().trim();
+      if (!lower || lower.length < 3) return false;
+      return LABEL_KEYWORDS.some((kw) => lower.includes(kw) || kw.startsWith(lower));
+    };
+
+    let currentCategory = '';
+    let foundPhantom = false;
+    const cleaned = [table[0]];
+
+    for (let i = 1; i < table.length; i++) {
+      const row = table[i];
+      let isPhantom = false;
+
+      // Hossz vagy Db. oszlopban nem-szám szöveg → fantom sor
+      if (cutLengthIdx >= 0) {
+        const val = String(row[cutLengthIdx] ?? '').trim();
+        if (val && isNaN(parseFloat(val.replace(',', '.')))) isPhantom = true;
+      }
+      if (!isPhantom && quantityIdx >= 0) {
+        const val = String(row[quantityIdx] ?? '').trim();
+        if (val && isNaN(parseFloat(val.replace(',', '.')))) isPhantom = true;
+      }
+      // Méret (size/size2/size3) oszlopokban ismert címke-szöveg → fantom sor
+      if (!isPhantom) {
+        for (const idx of [sizeIdx, size2Idx, size3Idx]) {
+          if (idx >= 0) {
+            const val = String(row[idx] ?? '').trim();
+            if (val && isLabelText(val)) { isPhantom = true; break; }
+          }
+        }
+      }
+
+      if (isPhantom) {
+        foundPhantom = true;
+        // Kategória név: a Rajzszám oszlopból, vagy az első nem-üres cellából
+        currentCategory = '';
+        if (rajzszamIdx >= 0) {
+          currentCategory = String(row[rajzszamIdx] ?? '').trim();
+        }
+        if (!currentCategory) {
+          const firstNonEmpty = row.find((cell) => String(cell ?? '').trim());
+          currentCategory = firstNonEmpty ? String(firstNonEmpty).trim() : '';
+        }
+        continue;
+      }
+
+      if (currentCategory) {
+        row._categoryType = currentCategory;
+      }
+      cleaned.push(row);
+    }
+
+    if (foundPhantom) {
+      table = cleaned;
+    }
   }
 
   return table;
@@ -564,7 +642,7 @@ function combinePagesNormalized(pageExtracts, knownTypes) {
 
       const sizeParts = [getValue('size'), getValue('size2'), getValue('size3')].filter(Boolean);
       normalizedRows.push([
-        pageType || '',
+        row._categoryType || pageType || '',
         sizeParts.join('x'),
         getValue('cutLength'),
         getValue('quantity'),

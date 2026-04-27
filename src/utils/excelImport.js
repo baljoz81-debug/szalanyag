@@ -436,7 +436,7 @@ export function importRows(allRows, sourceName, knownTypes = []) {
     const headerRow = allRows[headerIdx];
     const mapping = mapColumnsByHeader(headerRow);
     let dataRows = allRows.slice(headerIdx + 1);
-    const detectedType = detectTypeFromTitle(allRows.slice(0, headerIdx), knownTypes);
+    let detectedType = detectTypeFromTitle(allRows.slice(0, headerIdx), knownTypes);
 
     const anyaglista = isAnyaglistaFormat(headerRow, dataRows, mapping);
     let detectedCategories = null;
@@ -444,6 +444,33 @@ export function importRows(allRows, sourceName, knownTypes = []) {
       const result = preprocessAnyaglista(dataRows, mapping, knownTypes);
       dataRows = result.rows;
       detectedCategories = result.categories;
+    }
+
+    // Soronkénti _categoryType mindig elsőbbséget kap (többtípusos oldal)
+    if (!detectedCategories) {
+      const categoryTypes = [...new Set(dataRows.map((r) => r._categoryType).filter(Boolean))];
+      if (categoryTypes.length > 0) {
+        detectedCategories = categoryTypes;
+        detectedType = null; // soronkénti típus felülírja a cím-alapút
+      }
+    }
+
+    // Egyéb típusok összegyűjtése, ha még nincs detectedCategories
+    if (!detectedCategories && !detectedType) {
+      // 1. _pageType property-ből (PDF combinePagesSingleMapping)
+      const pageTypes = [...new Set(dataRows.map((r) => r._pageType).filter(Boolean))];
+      if (pageTypes.length > 0) {
+        detectedCategories = pageTypes;
+      }
+      // 2. Mappelt type oszlopból (PDF combinePagesNormalized)
+      else if (mapping.type !== undefined) {
+        const colTypes = [...new Set(
+          dataRows.map((r) => String(r[mapping.type] ?? '').trim()).filter(Boolean)
+        )];
+        if (colTypes.length > 0) {
+          detectedCategories = colTypes;
+        }
+      }
     }
 
     return {
@@ -463,6 +490,9 @@ export function importRows(allRows, sourceName, knownTypes = []) {
     ? { quality: 0, type: 1, size: 2, cutLength: 3, quantity: 4 }
     : {};
 
+  // PDF import: oldalanként detektált típusok összegyűjtése (_pageType)
+  const pageTypes = [...new Set(allRows.map((r) => r._pageType).filter(Boolean))];
+
   return {
     mapping,
     headerRow: null,
@@ -470,6 +500,7 @@ export function importRows(allRows, sourceName, knownTypes = []) {
     sheetName: sourceName,
     autoDetected: maxCols === 5,
     detectedType: null,
+    detectedCategories: pageTypes.length > 0 ? pageTypes : null,
     columnCount: maxCols,
   };
 }
