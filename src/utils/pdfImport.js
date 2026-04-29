@@ -269,8 +269,11 @@ function buildTransposedTable(rowMap) {
 
   if (labelInfos.length === 0) return [];
 
-  // 2. Minden címkéhez adatgyűjtés: a címke Y-tól a következő címke Y-ig
-  //    (vagy az oldal tetejéig, ha nincs következő)
+  // 2. Minden címkéhez adatgyűjtés a [current.yKey, nextY) tartományon.
+  //    Az olyan sorokat, amelyekben az első item a label-területen van
+  //    (x < threshold), de NEM a saját label sorunk, kihagyjuk — ezek
+  //    ismeretlen címkék sorai (pl. "Vág1", "Vág2"), és értékeiket nem
+  //    szabad a fő label-hez (pl. cutLength) társítani.
   const fieldData = new Map(); // field → [{ x, y, value }]
   const productXPositions = new Set();
 
@@ -279,14 +282,33 @@ function buildTransposedTable(rowMap) {
     const nextY = (i + 1 < labelInfos.length) ? labelInfos[i + 1].yKey : Infinity;
     const dataItems = [];
 
-    // Minden sor a [current.yKey, nextY) tartományban
     for (const yKey of allYKeys) {
       if (yKey < current.yKey) continue;
       if (yKey >= nextY) break;
 
       const rowItems = rowMap.get(yKey);
+      if (!rowItems || rowItems.length === 0) continue;
+
+      // Ismeretlen címke sor szűrése (csak ha nem a saját label sor).
+      // A klaszteren belüli itemek tartalmazhatnak label-területi (x<threshold)
+      // és adat-területi (x>=threshold) elemeket is. Csak akkor skipeljük az
+      // egész klasztert, ha a label-területi item és valamelyik adat-területi
+      // item AZONOS individuális Y-on van — ez egy ismeretlen címke sora
+      // (pl. "Vág1" + "90°" ugyanazon a soron). Ha eltérő Y-okon vannak, akkor
+      // a label-területi item csak egy kóbor cím, amit a Y-klaszterezés vont
+      // össze az adat-sorral; ilyenkor az adatokat megőrizzük.
+      if (yKey !== current.yKey) {
+        const labelAreaItems = rowItems.filter((it) => it.x < labelXThreshold);
+        if (labelAreaItems.length > 0) {
+          const dataAreaItems = rowItems.filter((it) => it.x >= labelXThreshold);
+          if (dataAreaItems.length === 0) continue;
+          const labelYs = new Set(labelAreaItems.map((it) => it.y));
+          const sameRow = dataAreaItems.some((it) => labelYs.has(it.y));
+          if (sameRow) continue;
+        }
+      }
+
       for (const item of rowItems) {
-        // Csak a jobb oldali elemek (x >= threshold) az adatok
         if (item.x >= labelXThreshold) {
           dataItems.push({ x: item.x, y: item.y, value: item.str.trim() });
           productXPositions.add(item.x);

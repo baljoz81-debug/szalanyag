@@ -196,6 +196,25 @@ function CutProductsPage() {
 
   // ─── PDF import ───────────────────────────────────────────────────────
 
+  const processPdfPages = useCallback(async (doc, fileName, pages) => {
+    try {
+      const { allRows } = await extractPagesAsTable(doc, pages, knownTypes);
+
+      if (allRows.length === 0) {
+        setImportMsg({ type: 'error', text: 'A kiválasztott oldalakból nem nyerhető ki szöveges tartalom. Szkennelt/képes PDF nem támogatott.' });
+        return;
+      }
+
+      const sourceName = `${fileName} (${pages.length === 1 ? `${pages[0]}. oldal` : `${pages[0]}–${pages[pages.length - 1]}. oldal`})`;
+      const result = importRows(allRows, sourceName, knownTypes);
+      setPendingMapping(result);
+    } catch (err) {
+      setImportMsg({ type: 'error', text: err.message || 'Hiba a PDF feldolgozásakor.' });
+    } finally {
+      setImporting(false);
+    }
+  }, [knownTypes]);
+
   const handlePdfFileChange = useCallback(async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -220,38 +239,25 @@ function CutProductsPage() {
         return;
       }
 
-      // Oldalválasztó dialog megjelenítése
+      // Egyoldalas PDF: közvetlen feldolgozás, oldalválasztó nélkül
+      if (numPages === 1) {
+        await processPdfPages(doc, file.name, [1]);
+        return;
+      }
+
+      // Többoldalas: oldalválasztó dialog
       setPendingPdf({ doc, numPages, fileName: file.name });
     } catch (err) {
       setImportMsg({ type: 'error', text: err.message || 'Hiba a PDF megnyitásakor.' });
-    } finally {
       setImporting(false);
     }
-  }, []);
+  }, [processPdfPages]);
 
   const handlePdfPageConfirm = useCallback(async (pages) => {
     const { doc, fileName } = pendingPdf;
     setPendingPdf(null);
-    setImporting(true);
-
-    try {
-      const { allRows } = await extractPagesAsTable(doc, pages, knownTypes);
-
-      if (allRows.length === 0) {
-        setImportMsg({ type: 'error', text: 'A kiválasztott oldalakból nem nyerhető ki szöveges tartalom. Szkennelt/képes PDF nem támogatott.' });
-        setImporting(false);
-        return;
-      }
-
-      const sourceName = `${fileName} (${pages.length === 1 ? `${pages[0]}. oldal` : `${pages[0]}–${pages[pages.length - 1]}. oldal`})`;
-      const result = importRows(allRows, sourceName, knownTypes);
-      setPendingMapping(result);
-    } catch (err) {
-      setImportMsg({ type: 'error', text: err.message || 'Hiba a PDF feldolgozásakor.' });
-    } finally {
-      setImporting(false);
-    }
-  }, [pendingPdf, knownTypes]);
+    await processPdfPages(doc, fileName, pages);
+  }, [pendingPdf, processPdfPages]);
 
   return (
     <main className="max-w-7xl mx-auto px-4 py-6">
