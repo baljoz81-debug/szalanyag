@@ -1,7 +1,9 @@
-// Szabott termékek oldal — P5–P10: szerkeszthető táblázat + Excel/CSV import + PDF import + oszlop-hozzárendelés
+// Szabott termékek oldal — P5–P10 + P12: import + átvitel a kalkulációhoz
 import { useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import useProductsStore from '../store/productsStore';
 import useSettingsStore from '../store/settingsStore';
+import useCalculationStore from '../store/calculationStore';
 import SectionCard from '../components/ui/SectionCard';
 import ProductsTable from '../components/products/ProductsTable';
 import ColumnMappingDialog from '../components/products/ColumnMappingDialog';
@@ -36,6 +38,41 @@ function SheetSelectorDialog({ sheetNames, onSelect, onCancel }) {
         >
           Mégsem
         </button>
+      </div>
+    </div>
+  );
+}
+
+function TransferModeDialog({ existingCount, newCount, onReplace, onAppend, onCancel }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-panel border border-border-subtle rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+        <h3 className="font-heading text-lg text-text-primary mb-2">
+          Átvitel a kalkulációhoz
+        </h3>
+        <p className="font-body text-sm text-text-secondary mb-5">
+          A főoldal kalkulációja már tartalmaz {existingCount} sort. Mit szeretnél tenni a {newCount} új sorral?
+        </p>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={onReplace}
+            className="w-full px-4 py-2 bg-accent text-white rounded font-body text-sm hover:bg-accent-hover transition-colors"
+          >
+            Felülírás — kalkuláció új adatokkal
+          </button>
+          <button
+            onClick={onAppend}
+            className="w-full px-4 py-2 bg-panel-hover text-text-primary border border-border-subtle rounded font-body text-sm hover:bg-input-bg transition-colors"
+          >
+            Hozzáadás — sorok hozzáfűzése a meglévőhöz
+          </button>
+          <button
+            onClick={onCancel}
+            className="w-full px-4 py-2 text-text-secondary font-body text-sm hover:text-text-primary transition-colors"
+          >
+            Mégsem
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -87,6 +124,12 @@ function CutProductsPage() {
   const barLengths = useSettingsStore((state) => state.barLengths);
   const knownTypes = barLengths.map((b) => b.type).filter(Boolean);
 
+  // P12: kalkulációs store
+  const calcRows         = useCalculationStore((state) => state.rows);
+  const calcSetRows      = useCalculationStore((state) => state.setRows);
+  const calcAppendRows   = useCalculationStore((state) => state.appendRows);
+  const navigate = useNavigate();
+
   const fileInputRef = useRef(null);
   const pdfInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
@@ -96,6 +139,7 @@ function CutProductsPage() {
   const [pendingImport, setPendingImport] = useState(null);    // { rows, sheetName, detectedType, warnings } — import mód dialog
   const [warningCells, setWarningCells] = useState(new Map()); // hibás cellák: rowId → Set<fieldKey>
   const [pendingPdf, setPendingPdf] = useState(null);          // { doc, numPages, fileName } — PDF oldalválasztó
+  const [pendingTransfer, setPendingTransfer] = useState(null); // P12: { meaningfulRows } — átvitel mód dialog
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -108,6 +152,33 @@ function CutProductsPage() {
   // Van-e érdemi adat a táblázatban?
   const hasExistingData = () => {
     return rows.some((r) => r.quality || r.type || r.size || r.cutLength || r.quantity);
+  };
+
+  // P12: átvitel a kalkulációhoz
+  const getMeaningfulRows = () =>
+    rows.filter((r) => r.quality || r.type || r.size || r.cutLength || r.quantity);
+
+  const handleTransferClick = () => {
+    const meaningfulRows = getMeaningfulRows();
+    if (meaningfulRows.length === 0) return;
+    if (calcRows.length > 0) {
+      setPendingTransfer({ meaningfulRows });
+    } else {
+      calcSetRows(meaningfulRows);
+      navigate('/');
+    }
+  };
+
+  const handleTransferReplace = () => {
+    calcSetRows(pendingTransfer.meaningfulRows);
+    setPendingTransfer(null);
+    navigate('/');
+  };
+
+  const handleTransferAppend = () => {
+    calcAppendRows(pendingTransfer.meaningfulRows);
+    setPendingTransfer(null);
+    navigate('/');
   };
 
   const finalizeImport = useCallback((importedRows, sheetName, detectedType, mode, warnings = [], newWarningCells = new Map()) => {
@@ -402,6 +473,38 @@ function CutProductsPage() {
           }}
           warningCells={warningCells}
         />
+
+        {/* P12: Átvitel a kalkulációhoz gomb */}
+        <div className="flex items-center justify-end mt-6 pt-4 border-t border-border-subtle">
+          {!hasExistingData() && (
+            <span className="font-body text-sm text-text-secondary mr-3">
+              Tölts fel adatot a táblázatba az átvitelhez.
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleTransferClick}
+            disabled={!hasExistingData()}
+            className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded font-body text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Átvitel a kalkulációhoz
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="5" y1="12" x2="19" y2="12" />
+              <polyline points="12 5 19 12 12 19" />
+            </svg>
+          </button>
+        </div>
       </SectionCard>
 
       {/* PDF oldalválasztó dialog */}
@@ -445,6 +548,17 @@ function CutProductsPage() {
           onReplace={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'replace', pendingImport.warnings, pendingImport.warningCells)}
           onAppend={() => finalizeImport(pendingImport.rows, pendingImport.sheetName, pendingImport.detectedType, 'append', pendingImport.warnings, pendingImport.warningCells)}
           onCancel={() => setPendingImport(null)}
+        />
+      )}
+
+      {/* P12: Átvitel mód választó dialog */}
+      {pendingTransfer && (
+        <TransferModeDialog
+          existingCount={calcRows.length}
+          newCount={pendingTransfer.meaningfulRows.length}
+          onReplace={handleTransferReplace}
+          onAppend={handleTransferAppend}
+          onCancel={() => setPendingTransfer(null)}
         />
       )}
     </main>
