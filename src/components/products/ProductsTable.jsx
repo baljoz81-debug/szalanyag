@@ -86,6 +86,7 @@ function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow, warningCells
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b border-border-subtle">
+            <th className="w-10 text-right font-heading text-sm text-text-secondary px-2 py-2">#</th>
             {COLUMNS.map((col) => (
               <th
                 key={col.key}
@@ -100,6 +101,9 @@ function ProductsTable({ rows, onUpdateCell, onAddRow, onRemoveRow, warningCells
         <tbody>
           {rows.map((row, rowIndex) => (
             <tr key={row.id} className={`border-b border-border-subtle/50 ${warningCells?.has(row.id) ? 'bg-yellow-500/10 border-l-2 border-l-yellow-400' : 'hover:bg-panel-hover/30'}`}>
+              <td className="px-2 py-0.5 text-right text-text-secondary tabular-nums text-sm font-body select-none">
+                {rowIndex + 1}
+              </td>
               {COLUMNS.map((col, colIndex) => {
                 const isCellWarning = warningCells?.get(row.id)?.has(col.key);
                 return (

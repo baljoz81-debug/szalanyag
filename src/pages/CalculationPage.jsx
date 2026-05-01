@@ -1,8 +1,10 @@
 // Kalkulációs főoldal — P14 sticky fejléc + P16 csoportosított táblázat
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import useCalculationStore from '../store/calculationStore';
 import useSettingsStore from '../store/settingsStore';
 import { calculatePackingWithSolutions, summarizeForDisplay } from '../utils/binPacking';
+import { exportCalculationToExcel } from '../utils/excelExport';
+import { buildCalculationTsv, copyTextToClipboard } from '../utils/clipboardExport';
 import NumericInput from '../components/ui/NumericInput';
 import CalculationGroupedTable from '../components/calculation/CalculationGroupedTable';
 import ProblemsPanel from '../components/calculation/ProblemsPanel';
@@ -38,6 +40,8 @@ function CalculationPage() {
   const setSetCountOverride  = useCalculationStore((s) => s.setSetCountOverride);
   const setRowSolution       = useCalculationStore((s) => s.setRowSolution);
   const clearRowSolution     = useCalculationStore((s) => s.clearRowSolution);
+  const barLengthOverrides   = useCalculationStore((s) => s.barLengthOverrides);
+  const setBarLengthOverride = useCalculationStore((s) => s.setBarLengthOverride);
 
   const barLengths       = useSettingsStore((s) => s.barLengths);
   const defaultCutLoss   = useSettingsStore((s) => s.defaultCutLoss);
@@ -52,8 +56,9 @@ function CalculationPage() {
       barLengths,
       cutLoss:  effectiveCutLoss,
       setCount: effectiveSetCount,
+      barLengthOverrides,
     })),
-    [rows, barLengths, effectiveCutLoss, effectiveSetCount],
+    [rows, barLengths, effectiveCutLoss, effectiveSetCount, barLengthOverrides],
   );
 
   // Adott típushoz tartozó beállított szálhossz feloldása (a megoldás dialog-hoz)
@@ -67,6 +72,20 @@ function CalculationPage() {
 
   const hasData = rows.length > 0;
   const { summary } = result;
+
+  // P21: vágólap-másolás visszajelzés
+  const [copyStatus, setCopyStatus] = useState('idle'); // 'idle' | 'copied' | 'error'
+  const handleCopy = async () => {
+    try {
+      const tsv = buildCalculationTsv(result.groups, effectiveCutLoss);
+      await copyTextToClipboard(tsv);
+      setCopyStatus('copied');
+    } catch (err) {
+      console.error('Vágólap másolás hiba:', err);
+      setCopyStatus('error');
+    }
+    setTimeout(() => setCopyStatus('idle'), 2000);
+  };
 
   return (
     <>
@@ -156,7 +175,43 @@ function CalculationPage() {
                 </div>
               )}
               {result.groups.length > 0 ? (
-                <CalculationGroupedTable groups={result.groups} />
+                <>
+                  <div className="flex justify-end gap-2 mb-4">
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded font-body text-sm font-medium transition-colors border ${
+                        copyStatus === 'copied'
+                          ? 'bg-status-green/15 border-status-green text-status-green'
+                          : copyStatus === 'error'
+                            ? 'bg-danger/15 border-danger text-danger'
+                            : 'bg-panel border-border-subtle text-text-primary hover:bg-panel-hover'
+                      }`}
+                    >
+                      {copyStatus === 'copied'
+                        ? 'Másolva!'
+                        : copyStatus === 'error'
+                          ? 'Hiba — próbáld újra'
+                          : 'Másolás vágólapra'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportCalculationToExcel({
+                        groups: result.groups,
+                        cutLoss: effectiveCutLoss,
+                      })}
+                      className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded font-body text-sm font-medium transition-colors"
+                    >
+                      Exportálás Excel-be
+                    </button>
+                  </div>
+                  <CalculationGroupedTable
+                    groups={result.groups}
+                    resolveDefaultBarLength={resolveBarLengthForType}
+                    onSetBarLengthOverride={setBarLengthOverride}
+                    onResetBarLengthOverride={(key) => setBarLengthOverride(key, null)}
+                  />
+                </>
               ) : (
                 <p className="font-body text-text-secondary text-sm text-center py-8">
                   Nincs packolható sor — minden adatot kihagytál vagy hibásak.

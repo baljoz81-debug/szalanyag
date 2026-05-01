@@ -32,7 +32,7 @@ const buildBarLengthResolver = (barLengths) => {
 const isRowEmpty = (row) =>
   !row.quality && !row.type && !row.size && !row.cutLength && !row.quantity;
 
-export function calculatePacking({ rows = [], barLengths = [], cutLoss = 0, setCount = 1 } = {}) {
+export function calculatePacking({ rows = [], barLengths = [], cutLoss = 0, setCount = 1, barLengthOverrides = {} } = {}) {
   const safeCutLoss = Math.max(0, Number(cutLoss) || 0);
   const safeSetCount = Math.max(1, Math.floor(Number(setCount) || 1));
   const resolveBar = buildBarLengthResolver(barLengths);
@@ -53,14 +53,18 @@ export function calculatePacking({ rows = [], barLengths = [], cutLoss = 0, setC
     const key = `${row.quality ?? ''}|${row.type ?? ''}|${row.size ?? ''}`;
     let group = groupMap.get(key);
     if (!group) {
-      const { length, source } = resolveBar(row.type);
+      const overrideLen = Number(barLengthOverrides?.[key]);
+      const hasOverride = Number.isFinite(overrideLen) && overrideLen > 0;
+      const resolved = hasOverride
+        ? { length: overrideLen, source: 'override' }
+        : resolveBar(row.type);
       group = {
         key,
         quality: row.quality ?? '',
         type: row.type ?? '',
         size: row.size ?? '',
-        barLength: length,
-        barLengthSource: source,
+        barLength: resolved.length,
+        barLengthSource: resolved.source,
         pieces: [],
       };
       groupMap.set(key, group);
@@ -197,7 +201,7 @@ export function summarizeGroupForDisplay(group, fullThreshold = FULL_BAR_THRESHO
 
 const CBAR_TYPE_PREFIX = '__cbar';
 
-export function calculatePackingWithSolutions({ rows = [], barLengths = [], cutLoss = 0, setCount = 1 } = {}) {
+export function calculatePackingWithSolutions({ rows = [], barLengths = [], cutLoss = 0, setCount = 1, barLengthOverrides = {} } = {}) {
   const transformedRows = [];
   const customBarTypeMap = new Map();   // 'origType__cbar9000' → origType
   const customBarLengthMap = new Map(); // 'origType__cbar9000' → 9000
@@ -260,6 +264,7 @@ export function calculatePackingWithSolutions({ rows = [], barLengths = [], cutL
     barLengths: effectiveBarLengths,
     cutLoss,
     setCount,
+    barLengthOverrides,
   });
 
   // Type visszaállítás + customBar flag

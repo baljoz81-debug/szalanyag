@@ -430,6 +430,88 @@ describe('calculatePackingWithSolutions — probléma-megoldások', () => {
   });
 });
 
+describe('calculatePacking — barLengthOverrides (P17)', () => {
+  const bars = [
+    { id: '1', type: 'Laposacél',             length: 6000, deletable: true  },
+    { id: '7', type: 'Egyéb / alapértelmezett', length: 6000, deletable: false },
+  ];
+
+  it('override felülírja a típus-szintű szálhosszt az adott group-ra', () => {
+    const rows = [
+      { id: 'a', quality: 'S235', type: 'Laposacél', size: '40x5', cutLength: 5000, quantity: 1 },
+    ];
+    const key = 'S235|Laposacél|40x5';
+    const r = calculatePacking({
+      rows, barLengths: bars, cutLoss: 0,
+      barLengthOverrides: { [key]: 9000 },
+    });
+    expect(r.groups[0].barLength).toBe(9000);
+    expect(r.groups[0].barLengthSource).toBe('override');
+    expect(r.groups[0].bars[0].usedLength).toBe(5000);
+    expect(r.groups[0].bars[0].remainder).toBe(4000);
+  });
+
+  it('override csak a megegyező key-re hat — másik csoport változatlan', () => {
+    const rows = [
+      { id: 'a', quality: 'S235', type: 'Laposacél', size: '40x5', cutLength: 5000, quantity: 1 },
+      { id: 'b', quality: 'S235', type: 'Laposacél', size: '50x5', cutLength: 5000, quantity: 1 },
+    ];
+    const r = calculatePacking({
+      rows, barLengths: bars, cutLoss: 0,
+      barLengthOverrides: { 'S235|Laposacél|40x5': 9000 },
+    });
+    const g40 = r.groups.find((g) => g.size === '40x5');
+    const g50 = r.groups.find((g) => g.size === '50x5');
+    expect(g40.barLength).toBe(9000);
+    expect(g40.barLengthSource).toBe('override');
+    expect(g50.barLength).toBe(6000);
+    expect(g50.barLengthSource).toBe('matched');
+  });
+
+  it('érvénytelen override (0, negatív, NaN) → fallback a settings értékére', () => {
+    const rows = [
+      { id: 'a', quality: 'S235', type: 'Laposacél', size: '40x5', cutLength: 1000, quantity: 1 },
+    ];
+    for (const v of [0, -1, 'foo', null, undefined]) {
+      const r = calculatePacking({
+        rows, barLengths: bars,
+        barLengthOverrides: { 'S235|Laposacél|40x5': v },
+      });
+      expect(r.groups[0].barLength).toBe(6000);
+      expect(r.groups[0].barLengthSource).toBe('matched');
+    }
+  });
+
+  it('calculatePackingWithSolutions átadja az override-okat a calculatePacking-nek', () => {
+    const rows = [
+      { id: 'a', quality: 'S235', type: 'Laposacél', size: '40x5', cutLength: 5000, quantity: 1 },
+    ];
+    const r = calculatePackingWithSolutions({
+      rows, barLengths: bars,
+      barLengthOverrides: { 'S235|Laposacél|40x5': 9000 },
+    });
+    expect(r.groups[0].barLength).toBe(9000);
+    expect(r.groups[0].barLengthSource).toBe('override');
+  });
+
+  it('customBar megoldás kulcsa eltér az override key-től → customBar nyer', () => {
+    // A customBar key formája: `${quality}|${origType}|${size}|@${barLength}` —
+    // a sima override key (`quality|type|size`) nem matchel rá.
+    const rows = [
+      { id: 'a', quality: 'S235', type: 'Laposacél', size: '40x5',
+        cutLength: 9000, quantity: 1,
+        solution: { kind: 'customBar', barLength: 12000 } },
+    ];
+    const r = calculatePackingWithSolutions({
+      rows, barLengths: bars,
+      barLengthOverrides: { 'S235|Laposacél|40x5': 7000 },
+    });
+    expect(r.groups).toHaveLength(1);
+    expect(r.groups[0].customBar).toBe(true);
+    expect(r.groups[0].barLength).toBe(12000);
+  });
+});
+
 describe('calculatePacking — perf', () => {
   it('100 sor × 10 db (1000 darab) < 500ms', () => {
     const rows = [];
