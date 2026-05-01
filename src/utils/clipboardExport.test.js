@@ -36,6 +36,7 @@ describe('buildCalculationTsv — P21', () => {
     });
     const cells = buildCalculationTsv([g], 3).split('\n')[1].split('\t');
     expect(cells[4]).toBe('7,5'); // anyagmennyiség
+    expect(cells[6]).toBe('1');   // szükséges szálak (db) = d.full, nem totalBars
     expect(cells[7]).toBe('1,5'); // utolsó szál
   });
 

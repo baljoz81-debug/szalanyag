@@ -59,10 +59,18 @@ function NumericInput({
   };
 
   const handleChange = (e) => {
-    setLocalValue(e.target.value);
+    const next = e.target.value;
+    setLocalValue(next);
     // Valós idejű vizuális validáció
-    const valid = validate(e.target.value);
+    const valid = validate(next);
     setIsValid(valid);
+    // Spinner-kattintás vagy ↑/↓ azonnal commitol (blur nem történik)
+    if (valid) {
+      const num = allowDecimal ? parseFloat(next) : parseInt(next, 10);
+      if (num !== value) {
+        onChange(num);
+      }
+    }
   };
 
   const handleBlur = () => {

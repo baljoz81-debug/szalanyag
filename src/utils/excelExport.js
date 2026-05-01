@@ -34,7 +34,7 @@ export function buildCalculationRows(groups, cutLoss) {
       g.barLength,
       requiredMeters,
       cutLoss,
-      g.totalBars,
+      d.full,
       d.hasPartial ? round1(d.partialMeters) : '',
       Math.round(g.totalRemainder),
       g.totalBars > 0 ? Math.round(g.avgUtilization * 1000) / 10 : 0,

@@ -147,7 +147,7 @@ function ProblemSolutionDialog({ row, currentSolution, defaultBarLength, onSave,
                   onClick={addPart}
                   className="text-accent text-xs font-body hover:text-accent-hover"
                 >
-                  + Rész hozzáadása
+                  + Toldási hulladék hozzáadása
                 </button>
 
                 <div className="font-body text-xs pt-2 border-t border-border-subtle/50 mt-2">

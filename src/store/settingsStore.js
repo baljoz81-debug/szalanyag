@@ -27,7 +27,7 @@ const DEFAULT_BAR_LENGTHS = [
 const DEFAULT_SETTINGS = {
   barLengths:        DEFAULT_BAR_LENGTHS,
   materialQualities: DEFAULT_MATERIAL_QUALITIES,
-  defaultCutLoss:    3,   // mm — alapértelmezett vágási veszteség
+  defaultCutLoss:    0,   // mm — alapértelmezett vágási veszteség
   defaultSetCount:   1,   // db — alapértelmezett szetek száma
 };
 

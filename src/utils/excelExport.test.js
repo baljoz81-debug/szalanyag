@@ -37,6 +37,7 @@ describe('buildCalculationRows — P20 Excel export', () => {
     const rows = buildCalculationRows([g], 3);
     // 6000 × 1 / 1000 + 1.5 = 7.5
     expect(rows[0][4]).toBe(7.5);
+    expect(rows[0][6]).toBe(1);   // szükséges szálak (db) = d.full, nem totalBars
     expect(rows[0][7]).toBe(1.5); // utolsó szál
   });
 

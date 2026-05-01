@@ -37,7 +37,7 @@ export function buildCalculationTsv(groups, cutLoss) {
       g.barLength,
       formatNumberHu(requiredMeters, 1),
       cutLoss,
-      g.totalBars,
+      d.full,
       d.hasPartial ? formatNumberHu(round1(d.partialMeters), 1) : '',
       Math.round(g.totalRemainder),
       g.totalBars > 0 ? formatNumberHu(g.avgUtilization * 100, 1) : 0,
