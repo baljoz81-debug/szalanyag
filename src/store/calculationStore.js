@@ -63,6 +63,29 @@ const useCalculationStore = create((set, get) => ({
 
   setProjectName: (name) => set({ projectName: name ?? '' }),
 
+  // F4 — projekt-betöltés: minden mezőt egyszerre felülír, megtartja az ID-ket
+  // és a solution mezőt (a setRows ezt elveszítené).
+  hydrate: ({ rows, projectName, cutLossOverride, setCountOverride, barLengthOverrides } = {}) => {
+    const safeRows = Array.isArray(rows) ? rows.filter(isMeaningfulRow).map((r, idx) => ({
+      id: r.id || `${Date.now().toString(36)}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+      quality:   r.quality ?? '',
+      type:      r.type ?? '',
+      size:      r.size ?? '',
+      cutLength: r.cutLength ?? '',
+      quantity:  r.quantity ?? '',
+      solution:  r.solution ?? null,
+    })) : [];
+    set({
+      rows: safeRows,
+      projectName: typeof projectName === 'string' ? projectName : '',
+      cutLossOverride:  cutLossOverride  ?? null,
+      setCountOverride: setCountOverride ?? null,
+      barLengthOverrides: barLengthOverrides && typeof barLengthOverrides === 'object'
+        ? { ...barLengthOverrides }
+        : {},
+    });
+  },
+
   // ────────────── P21: probléma-megoldások ──────────────
 
   setRowSolution: (rowId, solution) =>

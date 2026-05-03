@@ -5,6 +5,7 @@ import useSettingsStore from '../store/settingsStore';
 import { calculatePackingWithSolutions, summarizeForDisplay } from '../utils/binPacking';
 import { exportCalculationToExcel } from '../utils/excelExport';
 import { exportCalculationToPdf } from '../utils/pdfExport';
+import { exportCuttingPlanToPdf } from '../utils/cuttingPlanPdf';
 import { buildCalculationTsv, copyTextToClipboard } from '../utils/clipboardExport';
 import NumericInput from '../components/ui/NumericInput';
 import CalculationGroupedTable from '../components/calculation/CalculationGroupedTable';
@@ -108,6 +109,24 @@ function CalculationPage() {
       console.error('PDF export hiba:', err);
     } finally {
       setPdfBusy(false);
+    }
+  };
+
+  const [planPdfBusy, setPlanPdfBusy] = useState(false);
+  const handlePlanPdfExport = async () => {
+    if (planPdfBusy) return;
+    setPlanPdfBusy(true);
+    try {
+      await exportCuttingPlanToPdf({
+        groups: result.groups,
+        cutLoss: effectiveCutLoss,
+        projectName,
+        setCount: effectiveSetCount,
+      });
+    } catch (err) {
+      console.error('Szabási terv PDF hiba:', err);
+    } finally {
+      setPlanPdfBusy(false);
     }
   };
 
@@ -246,6 +265,14 @@ function CalculationPage() {
                     </button>
                     <button
                       type="button"
+                      onClick={handlePlanPdfExport}
+                      disabled={planPdfBusy}
+                      className="inline-flex items-center gap-2 bg-panel border border-border-subtle text-text-primary hover:bg-panel-hover disabled:opacity-50 disabled:cursor-wait px-4 py-2 rounded font-body text-sm font-medium transition-colors"
+                    >
+                      {planPdfBusy ? 'PDF készül…' : 'Szabási terv PDF'}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => exportCalculationToExcel({
                         groups: result.groups,
                         cutLoss: effectiveCutLoss,
@@ -259,6 +286,7 @@ function CalculationPage() {
                   </div>
                   <CalculationGroupedTable
                     groups={result.groups}
+                    cutLoss={effectiveCutLoss}
                     resolveDefaultBarLength={resolveBarLengthForType}
                     onSetBarLengthOverride={setBarLengthOverride}
                     onResetBarLengthOverride={(key) => setBarLengthOverride(key, null)}

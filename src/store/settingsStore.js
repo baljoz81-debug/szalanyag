@@ -169,6 +169,18 @@ const useSettingsStore = create((set, get) => {
       get()._persist();
     },
 
+    // F4 — projekt-betöltés: a teljes settings állapotot felülírja és persistál
+    replaceSettings: (next) => {
+      const safe = next || {};
+      set({
+        barLengths:        Array.isArray(safe.barLengths)        ? safe.barLengths        : DEFAULT_SETTINGS.barLengths,
+        materialQualities: Array.isArray(safe.materialQualities) ? safe.materialQualities : DEFAULT_SETTINGS.materialQualities,
+        defaultCutLoss:    Number.isFinite(safe.defaultCutLoss)  ? safe.defaultCutLoss    : DEFAULT_SETTINGS.defaultCutLoss,
+        defaultSetCount:   Number.isFinite(safe.defaultSetCount) ? safe.defaultSetCount   : DEFAULT_SETTINGS.defaultSetCount,
+      });
+      get()._persist();
+    },
+
     // --- Belső: localStorage mentés ---
     // Minden akcio után automatikusan meghívódik
     _persist: () => {

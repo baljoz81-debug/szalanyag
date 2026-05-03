@@ -46,6 +46,13 @@ const useProductsStore = create((set, get) => ({
     set({ rows: newRows.length > 0 ? newRows : [createEmptyRow()] });
   },
 
+  // F4 — projekt-betöltés: nyers sorok beállítása (ID-vel együtt megtartva).
+  // Ha üres a beérkező lista, egy üres sor jön létre (mint setRows).
+  replaceRows: (newRows) => {
+    const safe = Array.isArray(newRows) ? newRows : [];
+    set({ rows: safe.length > 0 ? safe : [createEmptyRow()] });
+  },
+
   // Import: sorok hozzáfűzése a meglévőkhöz
   appendRows: (newRows) => {
     if (newRows.length === 0) return;
