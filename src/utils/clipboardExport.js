@@ -6,8 +6,7 @@ const HEADER = [
   'Méret',
   'Szálhossz (mm)',
   'Szükséges anyagmennyiség (m)',
-  'Vágási veszteség (mm)',
-  'Szükséges szálak (db)',
+  'Szükséges teljes szálak (db)',
   'Utolsó szál (m)',
   'Maradék (mm)',
   'Kihasználtság (%)',
@@ -24,7 +23,8 @@ const formatNumberHu = (n, decimals = 1) =>
     useGrouping: false,
   });
 
-export function buildCalculationTsv(groups, cutLoss) {
+export function buildCalculationTsv(groups, cutLoss, options = {}) {
+  const { projectName, setCount } = options;
   const rows = (groups ?? []).map((g) => {
     const d = g.displayBars || { full: 0, hasPartial: false, partialMeters: 0 };
     const requiredMeters = g.totalBars > 0
@@ -36,14 +36,24 @@ export function buildCalculationTsv(groups, cutLoss) {
       g.size || '',
       g.barLength,
       formatNumberHu(requiredMeters, 1),
-      cutLoss,
       d.full,
       d.hasPartial ? formatNumberHu(round1(d.partialMeters), 1) : '',
       Math.round(g.totalRemainder),
       g.totalBars > 0 ? formatNumberHu(g.avgUtilization * 100, 1) : 0,
     ];
   });
-  return [HEADER, ...rows].map((r) => r.join('\t')).join('\n');
+
+  const meta = [];
+  if (projectName) meta.push(['Projekt', projectName]);
+  if (setCount != null) meta.push(['Szettek száma', setCount]);
+  if (cutLoss != null) meta.push(['Vágási veszteség (mm)', cutLoss]);
+
+  const lines = [];
+  for (const m of meta) lines.push(m.join('\t'));
+  if (meta.length > 0) lines.push(''); // üres sor elválasztó
+  lines.push(HEADER.join('\t'));
+  for (const r of rows) lines.push(r.join('\t'));
+  return lines.join('\n');
 }
 
 // Aszinkron másolás. Modern Clipboard API → execCommand fallback.

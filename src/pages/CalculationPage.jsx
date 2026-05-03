@@ -4,6 +4,7 @@ import useCalculationStore from '../store/calculationStore';
 import useSettingsStore from '../store/settingsStore';
 import { calculatePackingWithSolutions, summarizeForDisplay } from '../utils/binPacking';
 import { exportCalculationToExcel } from '../utils/excelExport';
+import { exportCalculationToPdf } from '../utils/pdfExport';
 import { buildCalculationTsv, copyTextToClipboard } from '../utils/clipboardExport';
 import NumericInput from '../components/ui/NumericInput';
 import CalculationGroupedTable from '../components/calculation/CalculationGroupedTable';
@@ -42,6 +43,8 @@ function CalculationPage() {
   const clearRowSolution     = useCalculationStore((s) => s.clearRowSolution);
   const barLengthOverrides   = useCalculationStore((s) => s.barLengthOverrides);
   const setBarLengthOverride = useCalculationStore((s) => s.setBarLengthOverride);
+  const projectName          = useCalculationStore((s) => s.projectName);
+  const setProjectName       = useCalculationStore((s) => s.setProjectName);
 
   const barLengths       = useSettingsStore((s) => s.barLengths);
   const defaultCutLoss   = useSettingsStore((s) => s.defaultCutLoss);
@@ -77,7 +80,10 @@ function CalculationPage() {
   const [copyStatus, setCopyStatus] = useState('idle'); // 'idle' | 'copied' | 'error'
   const handleCopy = async () => {
     try {
-      const tsv = buildCalculationTsv(result.groups, effectiveCutLoss);
+      const tsv = buildCalculationTsv(result.groups, effectiveCutLoss, {
+        projectName,
+        setCount: effectiveSetCount,
+      });
       await copyTextToClipboard(tsv);
       setCopyStatus('copied');
     } catch (err) {
@@ -87,11 +93,47 @@ function CalculationPage() {
     setTimeout(() => setCopyStatus('idle'), 2000);
   };
 
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const handlePdfExport = async () => {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      await exportCalculationToPdf({
+        groups: result.groups,
+        cutLoss: effectiveCutLoss,
+        projectName,
+        setCount: effectiveSetCount,
+      });
+    } catch (err) {
+      console.error('PDF export hiba:', err);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   return (
     <>
       {/* Sticky összesítő fejléc */}
       <div className="sticky top-14 z-30 bg-panel border-b border-border-subtle">
-        <div className="max-w-7xl mx-auto px-4 py-3">
+        <div className="max-w-7xl mx-auto px-4 py-3 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <label
+              htmlFor="project-name"
+              className="font-body text-sm text-text-primary font-medium sm:w-32 shrink-0"
+            >
+              Projekt neve
+            </label>
+            <input
+              id="project-name"
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              placeholder="pl. Csarnok-2026 (opcionális)"
+              maxLength={120}
+              className="flex-1 bg-input-bg text-text-primary px-3 py-2 rounded text-sm font-body
+                outline-none border border-input-border focus:border-input-focus"
+            />
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <Stat
               label="Anyagfajták"
@@ -196,9 +238,19 @@ function CalculationPage() {
                     </button>
                     <button
                       type="button"
+                      onClick={handlePdfExport}
+                      disabled={pdfBusy}
+                      className="inline-flex items-center gap-2 bg-panel border border-border-subtle text-text-primary hover:bg-panel-hover disabled:opacity-50 disabled:cursor-wait px-4 py-2 rounded font-body text-sm font-medium transition-colors"
+                    >
+                      {pdfBusy ? 'PDF készül…' : 'Exportálás PDF-be'}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => exportCalculationToExcel({
                         groups: result.groups,
                         cutLoss: effectiveCutLoss,
+                        projectName,
+                        setCount: effectiveSetCount,
                       })}
                       className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded font-body text-sm font-medium transition-colors"
                     >

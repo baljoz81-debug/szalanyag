@@ -1,5 +1,6 @@
 // P20: kalkuláció eredményének xlsx exportja (SheetJS).
 import * as XLSX from 'xlsx';
+import { buildExportFilename } from './pdfExport.js';
 
 const HEADER = [
   'Anyagminőség',
@@ -7,21 +8,15 @@ const HEADER = [
   'Méret',
   'Szálhossz (mm)',
   'Szükséges anyagmennyiség (m)',
-  'Vágási veszteség (mm)',
-  'Szükséges szálak (db)',
+  'Szükséges teljes szálak (db)',
   'Utolsó szál (m)',
   'Maradék (mm)',
   'Kihasználtság (%)',
 ];
 
-const dateStamp = (d = new Date()) => {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
-};
-
 const round1 = (n) => Math.round(n * 10) / 10;
 
-export function buildCalculationRows(groups, cutLoss) {
+export function buildCalculationRows(groups) {
   return (groups ?? []).map((g) => {
     const d = g.displayBars || { full: 0, hasPartial: false, partialMeters: 0 };
     const requiredMeters = g.totalBars > 0
@@ -33,7 +28,6 @@ export function buildCalculationRows(groups, cutLoss) {
       g.size || '',
       g.barLength,
       requiredMeters,
-      cutLoss,
       d.full,
       d.hasPartial ? round1(d.partialMeters) : '',
       Math.round(g.totalRemainder),
@@ -42,9 +36,21 @@ export function buildCalculationRows(groups, cutLoss) {
   });
 }
 
-export function exportCalculationToExcel({ groups, cutLoss, filename } = {}) {
-  const rows = buildCalculationRows(groups, cutLoss);
-  const aoa = [HEADER, ...rows];
+export function buildMetadataRows({ projectName, setCount, cutLoss } = {}) {
+  const rows = [];
+  if (projectName) rows.push(['Projekt', projectName]);
+  if (setCount != null) rows.push(['Szettek száma', setCount]);
+  if (cutLoss != null) rows.push(['Vágási veszteség (mm)', cutLoss]);
+  if (rows.length > 0) rows.push([]); // üres sor a táblázat előtt
+  return rows;
+}
+
+export function exportCalculationToExcel({
+  groups, cutLoss, projectName = '', setCount, filename,
+} = {}) {
+  const dataRows = buildCalculationRows(groups);
+  const meta = buildMetadataRows({ projectName, setCount, cutLoss });
+  const aoa = [...meta, HEADER, ...dataRows];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
   // Oszlopszélességek a fejléc hosszához igazítva
@@ -53,7 +59,7 @@ export function exportCalculationToExcel({ groups, cutLoss, filename } = {}) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Kalkuláció');
 
-  const name = filename || `szalanyag_export_${dateStamp()}.xlsx`;
+  const name = filename || buildExportFilename({ projectName, ext: 'xlsx' });
   XLSX.writeFile(wb, name);
   return name;
 }

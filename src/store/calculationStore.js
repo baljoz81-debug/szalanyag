@@ -27,6 +27,9 @@ const useCalculationStore = create((set, get) => ({
   // Anyag-csoportonkénti szálhossz override (P17): { [groupKey]: number }
   barLengthOverrides: {},
 
+  // Projekt megnevezés — exportokban jelenik meg (filename slug + fejléc)
+  projectName: '',
+
   // ────────────── rows ──────────────
 
   setRows: (newRows) => {
@@ -57,6 +60,8 @@ const useCalculationStore = create((set, get) => ({
     }),
 
   resetBarLengthOverrides: () => set({ barLengthOverrides: {} }),
+
+  setProjectName: (name) => set({ projectName: name ?? '' }),
 
   // ────────────── P21: probléma-megoldások ──────────────
 

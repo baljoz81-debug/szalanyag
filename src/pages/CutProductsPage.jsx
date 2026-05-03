@@ -10,6 +10,8 @@ import ColumnMappingDialog from '../components/products/ColumnMappingDialog';
 import PageRangeDialog from '../components/products/PageRangeDialog';
 import { validateFileType, parseWorkbook, importSheet, importRows, applyMapping } from '../utils/excelImport';
 import { openPdf, extractPagesAsTable, validatePdfFileType } from '../utils/pdfImport';
+import { exportProductsToExcel, exportProductsToPdf, buildProductsTsv } from '../utils/productsExport';
+import { copyTextToClipboard } from '../utils/clipboardExport';
 
 function SheetSelectorDialog({ sheetNames, onSelect, onCancel }) {
   return (
@@ -128,6 +130,8 @@ function CutProductsPage() {
   const calcRows         = useCalculationStore((state) => state.rows);
   const calcSetRows      = useCalculationStore((state) => state.setRows);
   const calcAppendRows   = useCalculationStore((state) => state.appendRows);
+  const projectName      = useCalculationStore((state) => state.projectName);
+  const setProjectName   = useCalculationStore((state) => state.setProjectName);
   const navigate = useNavigate();
 
   const fileInputRef = useRef(null);
@@ -140,6 +144,8 @@ function CutProductsPage() {
   const [warningCells, setWarningCells] = useState(new Map()); // hibás cellák: rowId → Set<fieldKey>
   const [pendingPdf, setPendingPdf] = useState(null);          // { doc, numPages, fileName } — PDF oldalválasztó
   const [pendingTransfer, setPendingTransfer] = useState(null); // P12: { meaningfulRows } — átvitel mód dialog
+  const [copyStatus, setCopyStatus] = useState('idle');         // 'idle' | 'copied' | 'error'
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -330,14 +336,59 @@ function CutProductsPage() {
     await processPdfPages(doc, fileName, pages);
   }, [pendingPdf, processPdfPages]);
 
+  // ─── Export handlerek ─────────────────────────────────────────────────
+
+  const handleCopy = async () => {
+    try {
+      const tsv = buildProductsTsv(rows, { projectName });
+      await copyTextToClipboard(tsv);
+      setCopyStatus('copied');
+    } catch (err) {
+      console.error('Vágólap másolás hiba:', err);
+      setCopyStatus('error');
+    }
+    setTimeout(() => setCopyStatus('idle'), 2000);
+  };
+
+  const handlePdfExport = async () => {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      await exportProductsToPdf({ rows, projectName });
+    } catch (err) {
+      console.error('PDF export hiba:', err);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   return (
     <main className="max-w-7xl mx-auto px-4 py-6">
       <h1 className="font-heading text-2xl text-text-primary mb-1">
         Szabott termékek
       </h1>
-      <p className="font-body text-text-secondary mb-6">
+      <p className="font-body text-text-secondary mb-4">
         Vágandó darabok felvitele és importálása
       </p>
+
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-2">
+        <label
+          htmlFor="cut-project-name"
+          className="font-body text-sm text-text-primary font-medium sm:w-32 shrink-0"
+        >
+          Projekt neve
+        </label>
+        <input
+          id="cut-project-name"
+          type="text"
+          value={projectName}
+          onChange={(e) => setProjectName(e.target.value)}
+          placeholder="pl. Csarnok-2026 (opcionális)"
+          maxLength={120}
+          className="flex-1 max-w-md bg-input-bg text-text-primary px-3 py-2 rounded text-sm font-body
+            outline-none border border-input-border focus:border-input-focus"
+        />
+      </div>
 
       <SectionCard title="Termékek táblázata">
         {/* Import gomb + visszajelzés */}
@@ -474,36 +525,75 @@ function CutProductsPage() {
           warningCells={warningCells}
         />
 
-        {/* P12: Átvitel a kalkulációhoz gomb */}
-        <div className="flex items-center justify-end mt-6 pt-4 border-t border-border-subtle">
-          {!hasExistingData() && (
-            <span className="font-body text-sm text-text-secondary mr-3">
-              Tölts fel adatot a táblázatba az átvitelhez.
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={handleTransferClick}
-            disabled={!hasExistingData()}
-            className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded font-body text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Átvitel a kalkulációhoz
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+        {/* Export gombok + Átvitel a kalkulációhoz */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mt-6 pt-4 border-t border-border-subtle">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCopy}
+              disabled={!hasExistingData()}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded font-body text-sm font-medium transition-colors border disabled:opacity-40 disabled:cursor-not-allowed ${
+                copyStatus === 'copied'
+                  ? 'bg-status-green/15 border-status-green text-status-green'
+                  : copyStatus === 'error'
+                    ? 'bg-danger/15 border-danger text-danger'
+                    : 'bg-panel border-border-subtle text-text-primary hover:bg-panel-hover'
+              }`}
             >
-              <line x1="5" y1="12" x2="19" y2="12" />
-              <polyline points="12 5 19 12 12 19" />
-            </svg>
-          </button>
+              {copyStatus === 'copied'
+                ? 'Másolva!'
+                : copyStatus === 'error'
+                  ? 'Hiba — próbáld újra'
+                  : 'Másolás vágólapra'}
+            </button>
+            <button
+              type="button"
+              onClick={handlePdfExport}
+              disabled={!hasExistingData() || pdfBusy}
+              className="inline-flex items-center gap-2 bg-panel border border-border-subtle text-text-primary hover:bg-panel-hover disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 rounded font-body text-sm font-medium transition-colors"
+            >
+              {pdfBusy ? 'PDF készül…' : 'Exportálás PDF-be'}
+            </button>
+            <button
+              type="button"
+              onClick={() => exportProductsToExcel({ rows, projectName })}
+              disabled={!hasExistingData()}
+              className="inline-flex items-center gap-2 bg-panel border border-border-subtle text-text-primary hover:bg-panel-hover disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 rounded font-body text-sm font-medium transition-colors"
+            >
+              Exportálás Excel-be
+            </button>
+          </div>
+
+          <div className="flex items-center">
+            {!hasExistingData() && (
+              <span className="font-body text-sm text-text-secondary mr-3">
+                Tölts fel adatot a táblázatba az átvitelhez.
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleTransferClick}
+              disabled={!hasExistingData()}
+              className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded font-body text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Átvitel a kalkulációhoz
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="5" y1="12" x2="19" y2="12" />
+                <polyline points="12 5 19 12 12 19" />
+              </svg>
+            </button>
+          </div>
         </div>
       </SectionCard>
 
