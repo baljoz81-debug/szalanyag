@@ -1,9 +1,16 @@
-// F3b/c — Szabási terv PDF export.
-// Anyagonként szakasz: cím + sávok + tömör darab-lista. Azonos szabási minták
-// egy sávban "Szál 1-2 (2×)" formában. Roboto Unicode fonttal (magyar ékezet OK).
+// F3b/c/d — Szabási terv PDF export.
+// Felépítés: fedőlap + anyagonkénti sáv-oldalak + záró anyaglista + minden
+// oldalon page-header (oldalszám + projektnév). Azonos szabási minták egy
+// sávban "Szál 1-2 (2×)" formában. Roboto Unicode fonttal (magyar ékezet OK).
 import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { ensureRobotoRegistered } from './pdfFonts.js';
-import { buildExportFilename } from './pdfExport.js';
+import {
+  buildExportFilename,
+  HEADER as ANYAGLISTA_HEADER,
+  buildPdfRows,
+  buildPdfSummary,
+} from './pdfExport.js';
 import {
   groupIdenticalBars,
   formatBarIndices,
@@ -27,62 +34,141 @@ const BAR_TOTAL_H = BAR_LABEL_H + BAR_HEIGHT + BAR_PIECES_H + BAR_GAP;
 const SECTION_TITLE_H = 6;
 const SECTION_GAP = 4;
 
-const COLOR_PIECE = [37, 99, 235];     // #2563eb
-const COLOR_KERF = [249, 115, 22];     // #f97316
-const COLOR_REMAINDER_FILL = [229, 231, 235]; // #e5e7eb
-const COLOR_REMAINDER_HATCH = [180, 180, 180];
-const COLOR_FRAME = [120, 120, 120];
+// B&W nyomtató-barát paletta — csak szürkeárnyalatok + mintázatok.
+// Megkülönböztetés: darab = közép-szürke tömör; kerf = fehér rés
+// (a darabok közé "kihagyott" csík); maradék = halvány háttér + 45°-os csíkozás.
+const COLOR_PIECE = [110, 110, 110];       // #6e6e6e közép-szürke, tömör
+const COLOR_KERF = [255, 255, 255];        // fehér rés a darabok között
+const COLOR_REMAINDER_FILL = [240, 240, 240]; // világos szürke háttér
+const COLOR_REMAINDER_HATCH = [110, 110, 110]; // sötétebb csíkozás
+const COLOR_FRAME = [40, 40, 40];          // sötét keret (jó kontraszt)
 const COLOR_TEXT_PRIMARY = [20, 20, 20];
-const COLOR_TEXT_SECONDARY = [100, 100, 100];
-const COLOR_ACCENT = [234, 88, 12];    // #ea580c
+const COLOR_TEXT_SECONDARY = [90, 90, 90];
+const COLOR_ACCENT = [0, 0, 0];            // db-szám → fekete bold (kiemelés)
 
 const round = (n) => Math.round(n);
 const fmtMm = (mm) => round(mm).toLocaleString('hu-HU');
 
 // ────────────────────────────────────────────────────────────────────────
-// Header (első oldal)
+// F3d — Fedőlap (1. oldal)
 // ────────────────────────────────────────────────────────────────────────
 
-function drawHeader(doc, { projectName, setCount, cutLoss, groups }) {
+function drawCoverPage(doc, { projectName, setCount, cutLoss, summary, hasContent }) {
+  const titleY = PAGE_H * 0.30;
+
+  doc.setFont('Roboto', 'bold');
+  doc.setFontSize(28);
+  doc.setTextColor(...COLOR_TEXT_PRIMARY);
+  doc.text(projectName || 'Szabási terv', PAGE_W / 2, titleY, { align: 'center' });
+
+  doc.setFont('Roboto', 'normal');
+  doc.setFontSize(14);
+  doc.setTextColor(...COLOR_TEXT_SECONDARY);
+  doc.text('Szabási terv', PAGE_W / 2, titleY + 10, { align: 'center' });
+
   const now = new Date();
   const dateStr = now.toLocaleDateString('hu-HU');
   const timeStr = now.toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' });
+  doc.setFontSize(11);
+  doc.text(`Generálva: ${dateStr} ${timeStr}`, PAGE_W / 2, titleY + 18, { align: 'center' });
+
+  // Összesítő blokk: 110 mm széles középre rendezett blokk, label balra, érték jobbra
+  const blockW = 110;
+  const blockX = PAGE_W / 2 - blockW / 2;
+  const labelX = blockX;
+  const valueX = blockX + blockW;
+  const startY = titleY + 32;
+  const lineH = 7;
+
+  const totalText = summary.totalFullBars > 0
+    ? `${summary.totalFullBars} db${summary.totalPartial ? ` + ${summary.totalPartial} részleges` : ''}`
+    : '—';
+  const utilText = summary.avgUtilizationPct
+    ? `${summary.avgUtilizationPct.toLocaleString('hu-HU')}%`
+    : '—';
+
+  const stats = [
+    ['Anyagcsoportok száma', `${summary.materialTypeCount} db`],
+    ['Összes szál', totalText],
+    ['Szettek száma', setCount != null ? `${setCount}` : '—'],
+    ['Vágási veszteség', `${cutLoss} mm`],
+    ['Átl. kihasználtság', utilText],
+  ];
+
+  doc.setFontSize(10);
+  stats.forEach(([label, value], i) => {
+    const yy = startY + i * lineH;
+    doc.setFont('Roboto', 'normal');
+    doc.setTextColor(...COLOR_TEXT_SECONDARY);
+    doc.text(label, labelX, yy);
+    doc.setFont('Roboto', 'bold');
+    doc.setTextColor(...COLOR_TEXT_PRIMARY);
+    doc.text(value, valueX, yy, { align: 'right' });
+  });
+
+  if (!hasContent) {
+    doc.setFont('Roboto', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(...COLOR_TEXT_SECONDARY);
+    doc.text('Nincs megjeleníthető szabás.', PAGE_W / 2, PAGE_H - 25, { align: 'center' });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// F3d — Page-header (minden oldal tetején, utólag rajzolva)
+// ────────────────────────────────────────────────────────────────────────
+
+function drawPageHeader(doc, { projectName, pageNum, totalPages }) {
+  const y = 6;
+  doc.setFont('Roboto', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...COLOR_TEXT_SECONDARY);
+  const left = projectName ? `Szálanyag · ${projectName}` : 'Szálanyag — Szabási terv';
+  doc.text(left, MARGIN_X, y);
+  doc.text(`${pageNum} / ${totalPages}`, PAGE_W - MARGIN_X, y, { align: 'right' });
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(0.15);
+  doc.line(MARGIN_X, y + 1.5, PAGE_W - MARGIN_X, y + 1.5);
+}
+
+function addPageHeaders(doc, projectName) {
+  const total = doc.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    drawPageHeader(doc, { projectName, pageNum: i, totalPages: total });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// F3d — Záró anyaglista (utolsó oldal)
+// ────────────────────────────────────────────────────────────────────────
+
+function drawSummarySection(doc, { groups }) {
+  doc.addPage();
+  const y = MARGIN_TOP;
 
   doc.setFont('Roboto', 'bold');
-  doc.setFontSize(14);
+  doc.setFontSize(13);
   doc.setTextColor(...COLOR_TEXT_PRIMARY);
-  doc.text(projectName || 'Szabási terv', MARGIN_X, MARGIN_TOP + 2);
+  doc.text('Anyaglista — összesítő', MARGIN_X, y + 4);
 
-  doc.setFont('Roboto', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(...COLOR_TEXT_SECONDARY);
-  let subY = MARGIN_TOP + 7;
-  doc.text(`Generálva: ${dateStr} ${timeStr}`, MARGIN_X, subY);
-
-  if (projectName) {
-    subY += 4;
-    doc.text('Szabási terv', MARGIN_X, subY);
-  }
-
-  // Összefoglaló sor
-  let totalBars = 0;
-  let materialCount = 0;
-  for (const g of groups ?? []) {
-    if (g.totalBars > 0) {
-      totalBars += g.totalBars;
-      materialCount += 1;
-    }
-  }
-  const parts = [
-    `${materialCount} anyagcsoport`,
-    `${totalBars} szál`,
-  ];
-  if (setCount != null) parts.push(`Szettek: ${setCount}`);
-  if (cutLoss != null)  parts.push(`Vágási veszteség: ${cutLoss} mm`);
-  subY += 4;
-  doc.text(parts.join(' · '), MARGIN_X, subY);
-
-  return subY + 5; // következő blokk Y pozíciója
+  autoTable(doc, {
+    head: [ANYAGLISTA_HEADER],
+    body: buildPdfRows(groups),
+    startY: y + 8,
+    margin: { left: MARGIN_X, right: MARGIN_X, top: MARGIN_TOP, bottom: MARGIN_BOTTOM },
+    styles: { font: 'Roboto', fontStyle: 'normal', fontSize: 8, cellPadding: 1.5 },
+    headStyles: { font: 'Roboto', fontStyle: 'bold', fillColor: [55, 65, 81], textColor: 255 },
+    alternateRowStyles: { fillColor: [245, 245, 245] },
+    columnStyles: {
+      3: { halign: 'right' },
+      4: { halign: 'right' },
+      5: { halign: 'right' },
+      6: { halign: 'right' },
+      7: { halign: 'right' },
+      8: { halign: 'right' },
+    },
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -139,7 +225,8 @@ function drawBar(doc, x, y, w, h, barLength, pieces, cutLoss) {
 
     if (idx < pieces.length - 1 && cutLoss > 0) {
       const kx = cursor * scale;
-      const kw = Math.max(cutLoss * scale, 0.25);
+      // Vizuális minimum 0.9 mm — kis kerf-nél is jól látható fehér rés
+      const kw = Math.max(cutLoss * scale, 0.9);
       doc.setFillColor(...COLOR_KERF);
       doc.rect(x + kx, y, kw, h, 'F');
       cursor += cutLoss;
@@ -259,23 +346,31 @@ export async function buildCuttingPlanPdf({ groups = [], cutLoss = 0, projectNam
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   await ensureRobotoRegistered(doc);
 
-  let y = drawHeader(doc, { projectName, setCount, cutLoss, groups });
-
   const renderableGroups = (groups || []).filter((g) => g.totalBars > 0);
+  const summary = buildPdfSummary(groups);
+
+  // 1. Fedőlap
+  drawCoverPage(doc, {
+    projectName,
+    setCount,
+    cutLoss,
+    summary,
+    hasContent: renderableGroups.length > 0,
+  });
+
   if (renderableGroups.length === 0) {
-    doc.setFont('Roboto', 'normal');
-    doc.setFontSize(10);
-    doc.setTextColor(...COLOR_TEXT_SECONDARY);
-    doc.text('Nincs megjeleníthető szabás.', MARGIN_X, y + 6);
+    addPageHeaders(doc, projectName);
     return doc;
   }
 
+  // 2. Tartalom oldalak — anyagonkénti sávok
+  doc.addPage();
+  let y = MARGIN_TOP;
   const pageBottom = PAGE_H - MARGIN_BOTTOM;
 
   for (const g of renderableGroups) {
     const planGroups = groupIdenticalBars(g.bars);
 
-    // Szakasz cím — ha nincs hely az első sávhoz, oldaltörés
     if (y + SECTION_TITLE_H + BAR_TOTAL_H > pageBottom) {
       doc.addPage();
       y = MARGIN_TOP;
@@ -298,6 +393,12 @@ export async function buildCuttingPlanPdf({ groups = [], cutLoss = 0, projectNam
 
     y += SECTION_GAP;
   }
+
+  // 3. Záró anyaglista (új oldal)
+  drawSummarySection(doc, { groups });
+
+  // 4. Page-header minden oldalra (most már tudjuk a totalPages-t)
+  addPageHeaders(doc, projectName);
 
   return doc;
 }

@@ -27,7 +27,7 @@ const mkGroup = (overrides = {}) => ({
 });
 
 describe('buildCuttingPlanPdf', () => {
-  it('generál egy doc-ot legalább 1 oldallal', async () => {
+  it('generál egy doc-ot legalább 3 oldallal (fedőlap + tartalom + összesítő)', async () => {
     const doc = await buildCuttingPlanPdf({
       groups: [mkGroup()],
       cutLoss: 3,
@@ -36,15 +36,15 @@ describe('buildCuttingPlanPdf', () => {
     });
     expect(doc).toBeTruthy();
     expect(typeof doc.getNumberOfPages).toBe('function');
-    expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+    expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(3);
   });
 
-  it('üres groups → 1 oldal "Nincs megjeleníthető szabás" felirattal', async () => {
+  it('üres groups → csak 1 oldal (fedőlap "Nincs megjeleníthető szabás" felirattal)', async () => {
     const doc = await buildCuttingPlanPdf({ groups: [], cutLoss: 0 });
     expect(doc.getNumberOfPages()).toBe(1);
   });
 
-  it('groups, ahol totalBars 0, kihagyva', async () => {
+  it('groups, ahol totalBars 0, csak fedőlap (záró tábla nincs)', async () => {
     const doc = await buildCuttingPlanPdf({
       groups: [{ ...mkGroup(), bars: [], totalBars: 0 }],
       cutLoss: 0,
@@ -52,13 +52,13 @@ describe('buildCuttingPlanPdf', () => {
     expect(doc.getNumberOfPages()).toBe(1);
   });
 
-  it('sok anyagcsoport → több oldal', async () => {
+  it('sok anyagcsoport → több oldal (fedőlap + tartalom + záró)', async () => {
     const groups = Array.from({ length: 10 }, (_, i) => mkGroup({
       key: `k${i}`,
       size: `${20 + i}x5`,
     }));
     const doc = await buildCuttingPlanPdf({ groups, cutLoss: 3, projectName: 'Sok' });
-    expect(doc.getNumberOfPages()).toBeGreaterThan(1);
+    expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(3);
   });
 
   it('a generált PDF blob nem üres', async () => {
